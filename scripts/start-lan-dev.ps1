@@ -63,7 +63,7 @@ if (-not $NoBuild) {
     & $dotnet build (Join-Path $winDir 'ClipBridge.sln') -c Debug --nologo -v q
     if ($LASTEXITCODE -ne 0) { Write-Host 'client build failed'; exit $LASTEXITCODE }
 }
-$clientExe = Join-Path $winDir 'src\ClipBridge.Win\bin\Debug\net8.0-windows\ClipBridge.Win.exe'
+$clientExe = Join-Path $winDir 'src\ClipBridge.Win\bin\Debug\net8.0-windows\ClipBridge.exe'
 if (-not (Test-Path $clientExe)) { Write-Host "Client exe missing: $clientExe"; exit 1 }
 
 # ---------------------------------------------------------------- candidates

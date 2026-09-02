@@ -1,6 +1,8 @@
 # ClipBridge Windows Client
 
 C# / .NET 8 tray app：监听剪贴板 → 上传到 relay；轮询 relay → 写入本地剪贴板。
+Milestone 3 起还负责：relay 子进程生命周期（Job Object + 有界重启）、单实例、
+局域网地址监控、mDNS 应答器、开机自启（HKCU Run）、状态模型。
 
 ```powershell
 dotnet build ClipBridge.sln
@@ -8,16 +10,20 @@ dotnet run --project src\ClipBridge.Win
 ```
 
 配置：`CLIPBRIDGE_DEVICE_TOKEN`（必须）等环境变量，或 `%APPDATA%\ClipBridge\config.json`。
-详见根目录 `docs/DEVELOPMENT.md`。
+详见根目录 `docs/DEVELOPMENT.md` 与 `docs/DAILY_USE.md`。
 
 ## 项目结构
 
 ```text
 src/
-  ClipBridge.Core/   协议模型、SHA-256、dedup/tracker 缓存、RelayClient、SyncEngine（无 UI，可单测）
+  ClipBridge.Core/   协议模型、SHA-256、dedup/tracker 缓存、RelayClient、SyncEngine、
+                     配置/迁移、状态模型、LAN 地址选择、mDNS 编解码与应答器、
+                     RelayManager、单实例、开机自启（全部无 UI，可单测）
   ClipBridge.Win/    最小托盘宿主：隐藏窗口 + WM_CLIPBOARDUPDATE + STA 剪贴板访问
+                     + 生命周期编排（发布产物名为 ClipBridge.exe）
 tests/
-  ClipBridge.Core.Tests/  xunit 单测（hash / dedup / 引擎 / API client / config / 日志脱敏）
+  ClipBridge.Core.Tests/  xunit 单测（hash / dedup / 引擎 / API client / config / 日志脱敏 /
+                           M3: 生命周期/单实例/状态模型/网络选择/mDNS/轮转/迁移/自启）
 ```
 
 ## 手动剪贴板集成验证（OS 剪贴板难以自动化）：

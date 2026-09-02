@@ -46,8 +46,20 @@ public sealed class SyncEngine : IDisposable
     /// <summary>Set by the host (tray) to pause syncing without stopping the process.</summary>
     public volatile bool Paused;
 
+    /// <summary>
+    /// One-shot suppression of the NEXT local clipboard event (e.g. the tray "Copy LAN URL"
+    /// action must not upload its own clipboard write). Thread-safe via Interlocked.
+    /// </summary>
+    public volatile int SuppressNextLocalEvents;
+
     /// <summary>Last non-fatal error message (safe to show in UI; never contains content).</summary>
     public string? LastError { get; private set; }
+
+    /// <summary>
+    /// Raised whenever the sync health changes: LastError transitioned null↔non-null.
+    /// The host maps it to SyncState.Active/Offline (Paused is host-controlled).
+    /// </summary>
+    public event Action<bool>? SyncHealthChanged; // parameter: healthy
 
     public event Action<ClipRecord>? ClipUploaded;
     public event Action<ClipRecord>? ClipApplied;
@@ -111,6 +123,13 @@ public sealed class SyncEngine : IDisposable
         {
             return;
         }
+        // One-shot host suppression (e.g. "Copy LAN URL"): skip exactly this event.
+        if (Interlocked.CompareExchange(ref SuppressNextLocalEvents, 0, 0) > 0)
+        {
+            Interlocked.Decrement(ref SuppressNextLocalEvents);
+            _log.Debug("local_event_suppressed (host one-shot suppression)");
+            return;
+        }
 
         var sizeBytes = Encoding.UTF8.GetByteCount(text);
         if (sizeBytes > ClipContentType.MaxContentBytes)
@@ -146,6 +165,7 @@ public sealed class SyncEngine : IDisposable
             var clip = BuildLocalClip(text);
             var created = await _relay.PostClipAsync(clip, ct).ConfigureAwait(false);
             _uploaded.MarkUploaded(created.ClipId, created.ContentHash);
+            UpdateHealth(healthy: true);
             LastError = null;
             _log.Info(
                 $"clip_uploaded clip_id={created.ClipId} device={created.DeviceId} " +
@@ -167,6 +187,7 @@ public sealed class SyncEngine : IDisposable
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
                                    or RelayApiException or System.Text.Json.JsonException)
         {
+            UpdateHealth(healthy: false);
             LastError = SafeExceptionMessage(ex);
             _log.Warn($"clip_upload_failed error={LastError}");
         }
@@ -174,6 +195,20 @@ public sealed class SyncEngine : IDisposable
         {
             _operationLock.Release();
         }
+    }
+
+    private void UpdateHealth(bool healthy)
+    {
+        var wasHealthy = LastError is null;
+        if (healthy == wasHealthy)
+        {
+            return;
+        }
+        if (healthy)
+        {
+            LastError = null;
+        }
+        SyncHealthChanged?.Invoke(healthy);
     }
 
     /// <summary>
@@ -227,7 +262,7 @@ public sealed class SyncEngine : IDisposable
                 }
                 return await ApplyRemoteAsync(clip, ct).ConfigureAwait(false);
             }
-            LastError = null;
+            UpdateHealth(healthy: true);
             return false;
         }
         catch (OperationCanceledException)
@@ -237,6 +272,7 @@ public sealed class SyncEngine : IDisposable
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException
                                    or RelayApiException or System.Text.Json.JsonException)
         {
+            UpdateHealth(healthy: false);
             LastError = SafeExceptionMessage(ex);
             _log.Warn($"poll_failed error={LastError}");
             return false;

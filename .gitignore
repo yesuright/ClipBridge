@@ -31,6 +31,10 @@ services/relay/data/
 *.sqlite3
 logs/
 
+# --- Build outputs (generated) ---
+build/
+artifacts/
+
 # --- Editor / OS ---
 .vscode/*
 !.vscode/settings.json.example

@@ -1,6 +1,8 @@
 """Development entry point: `python run.py` from services/relay.
 
 Refuses to start without CLIPBRIDGE_TOKEN (fail-fast, no default secret).
+Runs via `uvicorn.Server` so the app can request a graceful shutdown
+(POST /api/v1/admin/shutdown — used by the Milestone 3 tray app).
 """
 from __future__ import annotations
 
@@ -41,7 +43,11 @@ See docs/SECURITY.md before extending this beyond your own personal LAN.""")
     else:
         print("Listen mode: loopback only (127.0.0.1). "
               "For iPhone/iPad use, set CLIPBRIDGE_BIND_HOST=0.0.0.0 (see docs/DEVICE_TEST.md).")
-    uvicorn.run(app, host=settings.host, port=settings.port, log_level="warning")
+
+    config = uvicorn.Config(app, host=settings.host, port=settings.port, log_level="warning")
+    server = uvicorn.Server(config)
+    app.state.relay_server = server  # enables POST /api/v1/admin/shutdown
+    server.run()
     return 0
 
 

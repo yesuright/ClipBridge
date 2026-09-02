@@ -133,3 +133,35 @@ NOT SUPPORTED: plain-HTTP LAN is a local-network convenience, not an Internet mo
 `scripts/secret-scan.ps1` checks the working tree for PEM blocks, `token=`/`password=`-style
 assignments with long values, and inline `Bearer <long-token>` literals. Run it before commit:
 `powershell -ExecutionPolicy Bypass -File scripts/secret-scan.ps1` (it exits non-zero on hits).
+
+## 9. Milestone 3 additions (daily-use productization)
+
+- **Artifact (no installer, no signing)**: the daily build is a folder of binaries
+  (`artifacts\ClipBridge\`). It is unsigned — Windows SmartScreen may warn on first run
+  ("More info → Run anyway"). Signing is a deliberate future milestone; do not bypass
+  security warnings on untrusted copies.
+- **Secret handling is unchanged**: the token still lives in
+  `%APPDATA%\ClipBridge\config.json` (OS-user protected; never in the repo, never in logs).
+  The tray passes it to the relay child **via the child's environment** (same trust level as
+  the OS account; the environment of another process is not readable by other programs
+  without admin). It is never put on a command line (visible via WMI to the same user),
+  never logged.
+- **mDNS advertisement**: the app announces `clipbridge.local` over UDP 5353 on the LAN and
+  answers A-record queries for that name. It reveals ONLY the LAN hostname/address — the
+  same information visible in `ipconfig`; no secrets, no clipboard data, no other hosts.
+  Any device on the LAN may resolve it — same trust boundary as LAN mode itself
+  (trusted private network only; see §4.2). The responder is in-app: no Bonjour/third-party
+  daemon is installed, and it stops when the app exits. The name is only a convenience
+  address — the API's protection (bearer token, plain-HTTP-LAN caveats) is unchanged.
+- **`POST /api/v1/admin/shutdown`** (additive, M3): an authenticated internal stop switch
+  for graceful shutdown by the tray client. It requires the same shared token — anyone who
+  can already read/write clips can also stop the relay. No anonymous access, no effect on
+  the stored data.
+- **Startup registration**: user-level `HKCU\...\Run` only (no admin, reversible, per-user).
+  Default OFF; explicit opt-in via tray menu or CLI.
+- **Relay child lifecycle**: the relay runs as a child of the tray app with a Job Object
+  (kill-on-close) — the OS guarantees no orphan process survives the client, even on a
+  client crash. The relay listens on `0.0.0.0:8787` in managed mode (LAN mode), which is the
+  same exposure as the previous `start-lan-dev.ps1` daily setup — trusted private network
+  only (see §4.2). Do NOT forward 8787 at the router.
+

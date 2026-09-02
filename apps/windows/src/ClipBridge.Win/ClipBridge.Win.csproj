@@ -8,8 +8,8 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <RootNamespace>ClipBridge.Win</RootNamespace>
-    <AssemblyName>ClipBridge.Win</AssemblyName>
-    <Version>0.1.0</Version>
+    <AssemblyName>ClipBridge</AssemblyName>
+    <Version>0.3.0</Version>
     <!-- Minimal tray shell: no custom icon, no fancy UI in Milestone 1. -->
   </PropertyGroup>
 

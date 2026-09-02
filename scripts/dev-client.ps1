@@ -27,7 +27,7 @@ if ($DeviceId)    { $env:CLIPBRIDGE_DEVICE_ID = $DeviceId }
 if ($DeviceToken) { $env:CLIPBRIDGE_DEVICE_TOKEN = $DeviceToken }
 $env:CLIPBRIDGE_POLL_INTERVAL_MS = "$PollIntervalMs"
 
-$exe = Join-Path $winDir 'src\ClipBridge.Win\bin\Debug\net8.0-windows\ClipBridge.Win.exe'
+$exe = Join-Path $winDir 'src\ClipBridge.Win\bin\Debug\net8.0-windows\ClipBridge.exe'
 if (-not (Test-Path $exe)) { Write-Host "Client exe missing: $exe"; exit 1 }
 Write-Host "Starting ClipBridge client: $exe"
 & $exe

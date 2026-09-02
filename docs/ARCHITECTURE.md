@@ -1,4 +1,53 @@
-# ClipBridge Architecture (Milestone 2)
+# ClipBridge Architecture (Milestone 3)
+
+> Milestone 3 = Windows daily-use productization. The sync protocol, storage, loop-prevention
+> and Shortcuts integration from M1/M2 are **unchanged**; this document describes the
+> daily-use process/relay architecture added in M3. Developer-mode parts (services/relay
+> run from source) remain fully supported.
+
+## 0. Milestone 3 architecture decision — how the relay runs every day
+
+The daily question was: *who owns the relay process?* Options weighed:
+
+| Option | Verdict |
+| --- | --- |
+| **A. Tray client manages a packaged relay child** | **Chosen.** One process tree, user-level (no admin), crash-restart policy in one place, clean shutdown handshake, guaranteed no-orphan via Job Object. |
+| B. Relay ported into the .NET client (in-proc ASP.NET Core) | Rejected. The relay API is verified on real devices (iPhone Shortcuts) with exact JSON/error/dedup semantics; porting risks protocol regressions for zero user-visible gain. Keeps the Python relay as a single self-contained exe. |
+| C. Windows Service + tray controller | Rejected. Needs admin to install/register, runs before login (undesirable for a clipboard tool), more moving parts. |
+| D. Keep `start-lan-dev.ps1` in Startup | Rejected. Console window, manual Python, two processes to babysit, no crash recovery, no single instance. |
+
+Because it matters: **the relay is packaged with PyInstaller (onedir)** — the user never
+installs/activates Python, pip, or venvs. The client exe is **self-contained .NET publish** —
+no .NET runtime install either. Runtime dependencies of the artifact: **none** (Windows only).
+
+```text
+┌─────────────────────────────── Windows 11 PC (single user process tree) ──────────────────────────────┐
+│  ClipBridge.exe (tray client; .NET 8 self-contained, WinForms, GUI subsystem — no console window)      │
+│   ├─ SyncEngine (clipboard listener + 2 s polling + loop prevention)  [ClipBridge.Core]                │
+│   ├─ AppStatusModel (immutable snapshots + Changed event — UI decoupled)                               │
+│   ├─ NetworkMonitor (event-driven LAN address tracking)                                                │
+│   ├─ MdnsResponder (in-app, advertises clipbridge.local on UDP 5353)                                   │
+│   └─ RelayManager ── child process ──► relay\ClipBridgeRelay.exe (PyInstaller, FastAPI + SQLite)       │
+│         │  Job Object (kill-on-close) → no orphan even if the client crashes                            │
+│         │  POST /api/v1/admin/shutdown  → graceful drain on normal exit                                 │
+│         └─ bounded restart policy (≤3 restarts, 1s/2s/4s backoff, 60 s stability reset)                 │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                      ▲ iPhone/iPad Shortcuts (LAN plain HTTP, port 8787)
+```
+
+### Why Option A is the right size for this product
+
+1. **Daily reliability**: one user double-clicks `ClipBridge.exe`; relay comes up, health is
+   verified (bounded 20 s), port conflicts become a clear `Failed(port_in_use)` state instead
+   of a silent mess. Two processes, one user-visible icon.
+2. **Clean shutdown**: `POST /api/v1/admin/shutdown` (Bearer-guarded, additive) drains uvicorn
+   and closes SQLite; a 5 s grace + hard kill + Job Object close leaves nothing behind.
+3. **Crash recovery**: relay crash → backoff restart (≤3), tray shows state; client never dies.
+   Restart storms are capped; a ≥60 s stable run resets the budget.
+4. **Parent crash safe**: the Job Object kills the child with the parent — no 8787 orphan.
+5. **No runtime dependency for the user**: PyInstaller + self-contained .NET publish.
+6. **Future-proof**: an installer later just copies the same folder and registers the same
+   exe (Startup registration is `HKCU\...\Run`, already supported).
 
 ## 1. Components
 
@@ -192,7 +241,56 @@ configurable via env/config. A relay restart is handled naturally (next poll suc
   encrypted-content variant can be added as a new `content_type` without breaking M1 records.
   **Not implemented in M1** (explicitly deferred).
 
-## 8. Resource envelope (targets)
+## 8. LAN hostname / mDNS (Milestone 3)
+
+**Chosen strategy: in-app mDNS responder for `clipbridge.local` (+ IP fallback).**
+
+Investigation results:
+
+| Option | Verdict |
+| --- | --- |
+| A. mDNS (`clipbridge.local`) — in-app responder | **Implemented, best-effort.** Cross-platform-free, zero installs (no Bonjour/Apple service), stops with the app. Coexists with other 5353 responders via SO_REUSEADDR (verified live next to Edge, which also binds 5353). Resolution depends on the network stack (see below) — status per run is surfaced in the status model; **IP URL is the supported primary**. |
+| B. `DESKTOP-XXXX` (SMB/LLMNR/NetBIOS hostname) | Rejected: iOS does not resolve Windows NetBIOS/LLMNR names; mDNS is what iOS's Bonjour stack queries. |
+| C. DHCP reservation | Documented manual fallback only (never touch the router). |
+| D. Shortcut IP-update UX | Implemented: tray shows/copies the current LAN URL and balloons on IP change. The `.local` name removes the need for this in most cases. |
+
+Implementation notes (understand before relying on it):
+
+- The responder is a small UDP listener on `0.0.0.0:5353` (SO_REUSEADDR first, then bind —
+  required because e.g. Edge/Bonjour already bind 5353; Windows delivers multicast to all
+  sockets in the group). It answers A/ANY queries for the configured single-label name
+  (`CLIPBRIDGE_LAN_HOSTNAME`, default `clipbridge`), announces with TTL 120 on start,
+  re-announces when the LAN IP changes, sends TTL-0 goodbyes on stop. It replies only to
+  QUERIES (QR=0) and never loops its own multicast back — both rules prevent the
+  self-answer ping-pong (an early version of this responder burned 100 % of a core on
+  answer-to-own-answer; the fix is in and verified).
+- Conflict handling: a startup probe (listen ~1.5 s for an A answer from another host for
+  the same name) detects collisions; the responder then stops advertising and the status
+  model reports `MdnsState.Conflict` (IP addresses remain the fallback; the name can be
+  changed in config).
+- VPN / VLAN: mDNS is LAN-local multicast. If an iOS VPN routes multicast into the tunnel,
+  `.local` may not resolve while the VPN is on — the IP URL remains the fallback (this is
+  exactly why the tray always shows the current IP URL too).
+- Multi-homed Windows: the Windows DNS client picks an arbitrary interface (its .local
+  queries were observed arriving via a virtual adapter, e.g. WSL vEthernet, on the dev
+  machine) — per-interface multicast membership must cover every Up adapter, and even then
+  some virtual/isolated interfaces do not deliver. **mDNS is therefore best-effort; the IP
+  URL is the supported primary strategy** (tray shows it, one click copies it, and the
+  balloon announces changes).
+- Security: the responder reveals only the LAN hostname/address (same info as `ipconfig`);
+  no secrets, no clipboard data. Trust boundary is the same trusted-private-network model
+  as LAN mode (SECURITY.md §4.2). Firewall note: if `clipbridge.local` fails to resolve on
+  a client, keep using the IP URL (Kaspersky/firewall exclusions for 5353 are a manual
+  decision — ClipBridge never modifies them).
+
+**Verified on this machine (Windows side)**: the responder advertises and answered a
+`.local` A-query through the native Windows DNS client (`clipbridge.local → 192.168.1.14,
+TTL 120`) on the primary (WLAN) path; the dev machine's virtual-adapter query routing made
+that path inconsistent across the whole session, so **status = DEVICE_TEST_REQUIRED** —
+the iPhone must confirm `http://clipbridge.local:8787/api/v1/health` opens in Safari
+(`docs/DEVICE_TEST.md`); if it does not, use the tray's IP URL (always displayed).
+
+## 9. Resource envelope (targets)
 
 - Client: tray-only, no visible window; clipboard listener is event-driven (no polling);
   idle CPU ≈ 0%; RAM low (one HTTP client + string buffers).

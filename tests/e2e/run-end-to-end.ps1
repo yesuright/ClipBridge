@@ -149,7 +149,7 @@ try {
         & $dotnet build (Join-Path $ProjectDir 'apps\windows\ClipBridge.sln') -c Debug --nologo -v q | Out-Host
         if ($LASTEXITCODE -ne 0) { Fail 'windows client build'; exit 1 }
     }
-    $clientExe = Join-Path $ProjectDir 'apps\windows\src\ClipBridge.Win\bin\Debug\net8.0-windows\ClipBridge.Win.exe'
+    $clientExe = Join-Path $ProjectDir 'apps\windows\src\ClipBridge.Win\bin\Debug\net8.0-windows\ClipBridge.exe'
     if (-not (Test-Path $clientExe)) { Fail 'preflight: client exe' "missing $clientExe"; exit 1 }
     $clientProcess = Start-Process -FilePath $clientExe -PassThru
     Start-Sleep -Seconds 4

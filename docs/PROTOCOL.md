@@ -18,6 +18,10 @@ LAN mode for iPhone/iPad: `http://<PC-LAN-IP>:8787` (same trusted Wi-Fi; see DEV
 | GET | `/api/v1/clips?limit=N` | yes | recent history, newest first | 200 `{"count":N,"clips":[...]}` |
 | GET | `/api/v1/clips?limit=N&exclude_device_id=<id>` | yes | recent history excluding one device | 200 `{"count":N,"clips":[...]}` |
 | GET | `/api/v1/clips/{clip_id}` | yes | single clip | 200 Clip / 404 |
+| POST | `/api/v1/admin/shutdown` | yes | **M3 internal only**: ask the relay to stop gracefully (used by the tray app; additive, does not affect any other endpoint) | 200 `{"status":"shutting_down"}` / 503 when running without a controlling server |
+
+Server-hosted: the daily-use artifact always runs `POST /api/v1/admin/shutdown`
+(auth-required). The endpoint is purely lifecycle; it never touches stored clips.
 
 `limit`: default 50, clamped to 1–200.
 

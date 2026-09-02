@@ -5,6 +5,9 @@ namespace ClipBridge.Core.Config;
 /// <summary>
 /// Client configuration. Precedence: environment variables &gt; JSON config file &gt; defaults.
 /// Never commit real tokens: config.json lives in %APPDATA%\ClipBridge and is gitignored.
+///
+/// Milestone 3 additions: relay management (the tray app can own the relay child process),
+/// LAN hostname for the .local advertisement. Milestone 2 keys keep working unchanged.
 /// </summary>
 public sealed record ClientConfig
 {
@@ -20,9 +23,25 @@ public sealed record ClientConfig
     /// <summary>How long to remember our own uploads when filtering poll results.</summary>
     public int UploadMemorySeconds { get; init; } = 900;
 
-    public static string DefaultConfigPath { get; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                     "ClipBridge", "config.json");
+    // ---------------------------------------------------------------- M3: relay management
+
+    /// <summary>
+    /// True (default): the tray app starts/stops a local relay child process.
+    /// Development can run the relay separately (CLIPBRIDGE_MANAGE_RELAY=0 or a dev build
+    /// without a packaged relay next to the exe falls back to "external relay" mode).
+    /// </summary>
+    public bool ManageRelay { get; init; } = true;
+
+    /// <summary>Hostname advertised on the LAN via mDNS (e.g. "clipbridge" → clipbridge.local).</summary>
+    public string LanHostname { get; init; } = "clipbridge";
+
+    /// <summary>Port the managed relay listens on. Must match the port of RelayUrl.</summary>
+    public int RelayPort { get; init; } = 8787;
+
+    /// <summary>Show the hidden app icon in the tray (default true; false only affects nothing else).</summary>
+    public bool ShowTrayIcon { get; init; } = true;
+
+    public static string DefaultConfigPath => AppPaths.ConfigFile;
 
     public bool HasValidToken => !string.IsNullOrWhiteSpace(DeviceToken);
 
@@ -71,9 +90,32 @@ public sealed record ClientConfig
             HttpTimeoutSeconds = ParseInt(env("CLIPBRIDGE_HTTP_TIMEOUT_SECONDS"), config.HttpTimeoutSeconds, 5, 300),
             SuppressWindowSeconds = ParseInt(env("CLIPBRIDGE_SUPPRESS_WINDOW_SECONDS"), config.SuppressWindowSeconds, 1, 3600),
             UploadMemorySeconds = ParseInt(env("CLIPBRIDGE_UPLOAD_MEMORY_SECONDS"), config.UploadMemorySeconds, 60, 86400),
+            ManageRelay = ParseBool(env("CLIPBRIDGE_MANAGE_RELAY"), config.ManageRelay),
+            LanHostname = NormalizeHostname(env("CLIPBRIDGE_LAN_HOSTNAME") ?? config.LanHostname),
+            RelayPort = ParseInt(env("CLIPBRIDGE_RELAY_PORT"), config.RelayPort, 1, 65535),
+            ShowTrayIcon = ParseBool(env("CLIPBRIDGE_SHOW_TRAY_ICON"), config.ShowTrayIcon),
         };
     }
 
     private static int ParseInt(string? value, int fallback, int min, int max)
         => int.TryParse(value, out var parsed) ? Math.Clamp(parsed, min, max) : fallback;
+
+    private static bool ParseBool(string? value, bool fallback)
+        => value is not null && bool.TryParse(value, out var parsed) ? parsed : fallback;
+
+    private static string NormalizeHostname(string raw)
+    {
+        // mDNS hostnames: single label (letters, digits, hyphens), no dots.
+        // "clipbridge.local" / "clipbridge." inputs reduce to the label "clipbridge".
+        var name = raw.Trim().TrimEnd('.').ToLowerInvariant();
+        var dot = name.IndexOf('.');
+        if (dot >= 0)
+        {
+            name = name[..dot];
+        }
+        if (name.Length == 0 || name.Length > 63) return "clipbridge";
+        if (!name.All(c => char.IsAsciiLetterOrDigit(c) || c == '-')) return "clipbridge";
+        if (name[0] == '-' || name[^1] == '-') return "clipbridge";
+        return name;
+    }
 }

@@ -1,10 +1,16 @@
-# ClipBridge 真机手测指南 — iPhone / iPad Shortcuts (Milestone 2)
+# ClipBridge 真机手测指南 — iPhone / iPad Shortcuts (Milestone 3)
 
 > 目标：同一可信 LAN/Wi-Fi 下，iPhone 和 iPad 用 Apple 自带 Shortcuts 完成
 > **真实双向纯文本同步**。本指南让「拿着 iPhone 的人」一步步就能做完。
 >
-> 状态约定：本指南的步骤全部完成后，项目才能从
-> `DEVICE VALIDATION: READY_FOR_DEVICE_TEST` 升级为 `iPhone/iPad PASS`。
+> Milestone 3 变化：Windows 侧已产品化（daily artifact、自动 relay、单实例、稳定地址
+> hostname `clipbridge.local`）。已通过的方式（IP URL）依旧 100% 兼容；
+> **升级路径** = 把 Shortcut 里的 URL 从 `http://192.168.x.x:8787` 换成
+> `http://clipbridge.local:8787` 之后做一次下述 T1/T2 验证（若该地址在手机上不通，
+> 回退用 IP 地址即可，见 §10）。
+>
+> 状态约定：以下 M3 真机重测步骤全部完成后，项目才能从
+> `IPHONE REGRESSION TEST: READY_FOR_DEVICE_RETEST` 升级为 `PASS`。
 
 ---
 
@@ -47,6 +53,12 @@ powershell -ExecutionPolicy Bypass -File scripts\show-lan-setup.ps1
   的**物理网卡**地址（VPN 和虚拟网卡不要用）。
 
 记下 Relay URL，例如：`http://192.168.1.123:8787`
+
+> **稳定地址（推荐，Milestone 3）**：Windows 客户端运行时会在局域网内应答
+> `clipbridge.local`。iPhone Safari 打开 `http://clipbridge.local:8787/api/v1/health`
+> 若能显示 `{"status":"ok",...}`，就可以把 Shortcut 里的 URL 固定为
+> `http://clipbridge.local:8787` —— **以后 PC 的 IP 变了也不用改**。
+> 手机打不通就用 IP（本页第 2 步）；PC 端托盘菜单里的 “LAN:” 行随时可看当前 IP/复制。
 
 ## 3. 准备 Bearer Token（在 Windows 上）
 

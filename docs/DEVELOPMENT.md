@@ -98,6 +98,22 @@ exit. Logs: `%APPDATA%\ClipBridge\client.log`.
 | `CLIPBRIDGE_HTTP_TIMEOUT_SECONDS` | `20` | clamped 5–300 |
 | `CLIPBRIDGE_SUPPRESS_WINDOW_SECONDS` | `30` | applied-remote echo window |
 | `CLIPBRIDGE_UPLOAD_MEMORY_SECONDS` | `900` | own-upload echo memory |
+| `CLIPBRIDGE_MANAGE_RELAY` | `true` | tray app owns the relay child (set `0` for external-relay dev mode) |
+| `CLIPBRIDGE_LAN_HOSTNAME` | `clipbridge` | mDNS single-label name (→ `clipbridge.local`) |
+| `CLIPBRIDGE_RELAY_PORT` | `8787` | port the managed relay binds (must match RelayUrl) |
+| `CLIPBRIDGE_SHOW_TRAY_ICON` | `true` | — |
+
+### Daily-use build (Milestone 3)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-daily.ps1
+# → artifacts\ClipBridge\ClipBridge.exe + relay\ClipBridgeRelay.exe (self-contained, no runtime deps)
+powershell -ExecutionPolicy Bypass -File scripts\verify-daily.ps1   # integration smoke
+```
+
+Client CLI (scriptable / future UI): `--status` (JSON status line from the running instance),
+`--exit` (graceful quit), `--enable-autostart` / `--disable-autostart` / `--autostart-status`,
+`--tray-autostart` (used by the Startup registration).
 
 ## 5b. LAN mode for iPhone/iPad (Milestone 2)
 

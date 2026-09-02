@@ -130,6 +130,18 @@ def create_app(settings: Settings | None = None, store: ClipStore | None = None)
     def health():
         return {"status": "ok", "service": "clipbridge-relay", "version": __version__}
 
+    @app.post("/api/v1/admin/shutdown")
+    async def admin_shutdown(request: Request, _: None = Auth):
+        """Internal lifecycle endpoint (Milestone 3): asks the running uvicorn server to stop
+        gracefully. Additive — no existing endpoint changes. Requires the same bearer token as
+        every other /api/v1 endpoint. When the process runs without a controlling server
+        (e.g. in-process tests) it replies 503 and nothing happens."""
+        server = getattr(request.app.state, "relay_server", None)
+        if server is None:
+            raise ApiError(503, "shutdown_not_capable")
+        server.should_exit = True
+        return {"status": "shutting_down"}
+
     def _validate_exclude_device_id(exclude_device_id: str | None) -> str | None:
         """Query-param validation: device ids are never hardcoded server-side, but the
         value must still be a well-formed device id."""

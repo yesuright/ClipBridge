@@ -3,13 +3,14 @@
 个人使用的跨设备**纯文本剪贴板同步**工具：Windows 11 PC、iPhone、iPad 之间互相传递长文本
 （AI prompt / handoff / 日志 / 代码），不再依赖微信、QQ 等聊天软件。
 
-> **当前状态：Milestone 2 (iOS Shortcuts 接入准备)** — 工程侧全部完成并自测通过
-> （ENGINEERING: PASS）；iPhone/iPad 真机验证待用户按 `docs/DEVICE_TEST.md` 执行
-> （DEVICE VALIDATION: READY_FOR_DEVICE_TEST）。**无正式视觉 UI**（属于后续里程碑）。
+> **当前状态：Milestone 3 (Windows Daily-Use Productization)** — Windows 侧工程全部完成
+> （ENGINEERING: PASS）；iPhone 真机重测待用户执行（IPHONE REGRESSION TEST:
+> READY_FOR_DEVICE_RETEST）；稳定地址已实现 mDNS 并在 Windows 侧验证，iOS 侧待真机确认。
+> **无正式视觉 UI**（属于后续 Codex 里程碑）。
 
 ---
 
-## 它能做什么（Milestone 2）
+## 它能做什么（Milestone 3）
 
 ```
 Windows 复制文本 ──► ClipBridge 客户端 ──► Relay ──► 存储 latest + history
@@ -19,6 +20,13 @@ iPhone/iPad (Apple Shortcuts) ──► POST /clips/shortcut ──► Relay ─
 - 复制后自动同步出去；其他设备的文本几秒内写入 Windows 剪贴板（默认 2s 轮询）
 - **iPhone/iPad 双向同步**：同一可信 Wi-Fi 下，两个 Apple Shortcuts（Send / Get）
   即可工作，不依赖任何第三方 App，无需每次输入 URL/token/device ID
+- **日常使用 = 双击 `artifacts\ClipBridge\ClipBridge.exe`**：
+  - 无 PowerShell、无 Python、无 .NET 安装需求（self-contained + PyInstaller 打包）
+  - 托盘常驻；relay 作为子进程自动启动、自动健康检查、崩溃自动重启（有界退避）
+  - 单实例（重复双击只会激活已有实例）；退出不留孤儿进程（Job Object 保证）
+  - 可选“开机自启”（HKCU Run，无需管理员，默认关闭）
+  - 网络变化 / 睡醒自动恢复；LAN 地址变化时托盘气泡提示
+  - 内置 mDNS 应答器：`http://clipbridge.local:8787` 可作为稳定地址
 - `GET /clips/latest?exclude_device_id=<自己>`：设备不会取回自己产生的记录
 - `POST /clips/shortcut`：Shortcut 只需发 `device_id` + `content`，relay 生成
   `clip_id` / `content_hash` / `created_at`（Apple Shortcuts 无法原生做 UUID/SHA-256）
@@ -31,26 +39,42 @@ iPhone/iPad (Apple Shortcuts) ──► POST /clips/shortcut ──► Relay ─
 ## 不支持（明确范围）
 
 图片、文件、HTML/富文本剪贴板、二进制、密码管理集成。Windows 检测到非文本剪贴板时安全忽略。
-公网部署 / HTTPS / Tailscale / E2E 加密 / pairing UI **不在本里程碑**（见 SECURITY.md）。
+公网部署 / HTTPS / Tailscale / E2E 加密 / pairing UI / 正式安装器 / 正式 UI **不在本里程碑**。
 
 ## 目录结构
 
 ```text
 ClipBridge/
 ├─ apps/
-│  └─ windows/                 # C#/.NET 8 客户端（Core 库 + 最小 tray 宿主）
+│  └─ windows/                 # C#/.NET 8 客户端（Core 库 + 最小 tray 宿主 + 生命周期管理）
 ├─ services/
-│  └─ relay/                   # Python FastAPI + SQLite relay
+│  └─ relay/                   # Python FastAPI + SQLite relay（可 PyInstaller 打包为单 exe）
 ├─ shortcuts/                  # iPhone/iPad Shortcuts 接入指南（两个 Shortcut）
 ├─ docs/                       # ARCHITECTURE / PROTOCOL / SECURITY / DEVELOPMENT / DEVICE_TEST
-├─ scripts/                    # dev-relay / dev-client / start-lan-dev / show-lan-setup / secret-scan
-│  ├─ lib/                     # LanSetup.psm1（可测试的 LAN 地址选择逻辑）
-│  └─ tests/                   # test-lan-setup.ps1（LAN 逻辑单测）
+│                              #   / DAILY_USE / LIFECYCLE
+├─ scripts/
+│  ├─ build-daily.ps1          # 构建 daily-use artifact（publish + pyinstaller → artifacts\ClipBridge）
+│  ├─ verify-daily.ps1         # daily artifact 集成冒烟测试（单实例/崩溃恢复/无孤儿/干净退出…）
+│  ├─ dev-relay.ps1 / dev-client.ps1 / start-lan-dev.ps1 / show-lan-setup.ps1
+│  ├─ lib/LanSetup.psm1        # 可测试的 LAN 地址选择逻辑
+│  └─ tests/test-lan-setup.ps1 # LAN 逻辑单测
 ├─ tests/
 │  └─ e2e/                     # 全链路端到端验证脚本（含模拟 iPhone/iPad Shortcut 流程）
+├─ artifacts/                  # （构建生成，gitignored）daily-use 产物
 ├─ NuGet.Config                # 仓库级 NuGet 镜像配置（不影响全局）
 └─ README.md
 ```
+
+## 日常使用（最终用户体验）
+
+```powershell
+# 构建 daily-use artifact（一次性；内含 relay 打包 + 客户端 self-contained publish）
+powershell -ExecutionPolicy Bypass -File scripts\build-daily.ps1
+```
+
+之后用户只需要：**双击 `artifacts\ClipBridge\ClipBridge.exe`**。
+开机自启、暂停/恢复、复制 LAN URL、查看日志等都在托盘右键菜单里。
+详细普通用户指南：`docs/DAILY_USE.md`；进程/生命周期细节：`docs/LIFECYCLE.md`。
 
 ## 快速开始（本地开发）
 
@@ -76,24 +100,12 @@ Relay 没有 token 会拒绝启动（fail-fast）。token 生成：
 dotnet run --project apps\windows\src\ClipBridge.Win
 ```
 
-或让 5 秒内改 config：
+开发运行时若旁边没有打包的 relay exe，客户端自动进入 “external relay” 模式
+（只同步，不管理 relay 进程）——开发体验与 M2 一致。启动后：系统托盘出现 ClipBridge 图标，
+复制任意文本即自动上传；菜单：暂停同步 / 立即检查 / 复制 LAN URL / 重启 Relay / 日志 /
+数据目录 / 开机自启 / 退出。
 
-```powershell
-# 设置匹配 relay 的 token（二选一）
-$env:CLIPBRIDGE_DEVICE_TOKEN = "<同一个 token>"
-# 或写入 %APPDATA%\ClipBridge\config.json
-@{
-  RelayUrl = "http://127.0.0.1:8787"
-  DeviceId = "windows-main"
-  DeviceToken = "<同一个 token>"
-  PollIntervalMs = 2000
-} | ConvertTo-Json | Set-Content "$env:APPDATA\ClipBridge\config.json"
-```
-
-启动后：系统托盘出现 ClipBridge 图标（系统图标，非定制），复制任意文本即自动上传；
-其他设备 POST 的文本自动写入剪贴板。菜单：暂停同步 / 立即检查 / 打开日志目录 / 退出。
-
-### 3. LAN 模式（iPhone/iPad 接入，Milestone 2）
+### 3. LAN 模式（iPhone/iPad 接入）
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\start-lan-dev.ps1
@@ -129,12 +141,14 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8787/api/v1/clips/latest?exclude_device
 ## 如何测试
 
 ```powershell
-# Relay 单元/集成测试（90 个：含 shortcut 简化创建 / exclude_device_id / 去重 / Unicode...）
+# Relay 单元/集成测试（98 个：含 shortcut 简化创建 / exclude_device_id / 去重 / Unicode /
+#   admin shutdown 端点…）
 cd services\relay
 .\.venv\Scripts\pip install -r requirements-dev.txt
 .\.venv\Scripts\python -m pytest
 
-# Windows Core 单元测试（58 个）
+# Windows Core 单元测试（129 个：M2 全量 + M3 生命周期/单实例/状态模型/LAN 选择/
+#   mDNS 编解码/配置迁移/日志轮转/启动注册…）
 dotnet test apps\windows\ClipBridge.sln
 
 # LAN helper 逻辑测试（纯函数，无需 Pester）
@@ -142,6 +156,9 @@ powershell -ExecutionPolicy Bypass -File scripts\tests\test-lan-setup.ps1
 
 # 全链路端到端（真实剪贴板 + 真实 relay + 真实客户端 + 模拟 iPhone/iPad Shortcut 流程）
 powershell -ExecutionPolicy Bypass -File tests\e2e\run-end-to-end.ps1
+
+# daily artifact 集成冒烟（无控制台/单实例/relay 启动/崩溃恢复/干净退出/无孤儿）
+powershell -ExecutionPolicy Bypass -File scripts\verify-daily.ps1
 ```
 
 ## 循环（clipboard loop）是怎么防住的
@@ -180,15 +197,21 @@ ClipBridge 在 **4 层**防御：
 | `docs/SECURITY.md` | 威胁模型、token 处理、LAN 明文 HTTP 定位、HTTPS、已知限制 |
 | `docs/DEVELOPMENT.md` | 前置条件、命令、环境变量、LAN 脚本、NuGet 配置说明 |
 | `docs/DEVICE_TEST.md` | **iPhone/iPad 真机手测指南**（前置、URL、两个 Shortcut、双向测试、排障） |
+| `docs/DAILY_USE.md` | **普通用户日常指南**：启动 / 开机自启 / 暂停 / 退出 / 排障 / IP 变化 |
+| `docs/LIFECYCLE.md` | 进程模型、parent/child 生命周期、崩溃恢复、睡醒恢复、数据位置 |
 | `shortcuts/SEND_TO_CLIPBRIDGE.md` | iPhone Shortcuts：发送剪贴板到 Windows |
 | `shortcuts/GET_FROM_CLIPBRIDGE.md` | iPhone Shortcuts：拉取/复制最新「非本设备」文本 |
 
-## 技术选型（Milestone 1）
+## 技术选型（Milestone 1 + Milestone 3 增量）
 
 - **Windows 客户端**：C# / .NET 8 + WinForms（隐藏窗口 + `AddClipboardFormatListener`），
   核心逻辑放在可单元测试的 `ClipBridge.Core`（无 UI 依赖）。
-  不用 Electron，不引入 Chromium。
+  不用 Electron，不引入 Chromium。M3 增量：self-contained publish（用户无需装 .NET）、
+  单实例（mutex + named pipe）、Relay 子进程管理（Job Object kill-on-close）、
+  事件驱动网络监控、应用内 mDNS 应答器、HKCU Run 开机自启、可观测状态模型。
 - **Relay**：Python 3.13 + FastAPI + uvicorn，存储用 stdlib `sqlite3`（零额外基础设施）。
+  M3 增量：PyInstaller onedir 打包成单个自包含 exe（用户无需 Python）；
+  新增 `POST /api/v1/admin/shutdown`（Bearer 鉴权，仅用于优雅停服，不影响既有协议）。
   理由见 `docs/ARCHITECTURE.md`。
 - **传输**：短轮询（默认 2s，可配 0.5–60s）。理由见 `docs/ARCHITECTURE.md`。
 
