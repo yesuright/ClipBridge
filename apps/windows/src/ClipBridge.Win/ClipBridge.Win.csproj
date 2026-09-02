@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>ClipBridge.Win</RootNamespace>
+    <AssemblyName>ClipBridge.Win</AssemblyName>
+    <Version>0.1.0</Version>
+    <!-- Minimal tray shell: no custom icon, no fancy UI in Milestone 1. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ClipBridge.Core\ClipBridge.Core.csproj" />
+  </ItemGroup>
+
+</Project>

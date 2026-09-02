@@ -1,0 +1,28 @@
+# ClipBridge Windows Client
+
+C# / .NET 8 tray app：监听剪贴板 → 上传到 relay；轮询 relay → 写入本地剪贴板。
+
+```powershell
+dotnet build ClipBridge.sln
+dotnet run --project src\ClipBridge.Win
+```
+
+配置：`CLIPBRIDGE_DEVICE_TOKEN`（必须）等环境变量，或 `%APPDATA%\ClipBridge\config.json`。
+详见根目录 `docs/DEVELOPMENT.md`。
+
+## 项目结构
+
+```text
+src/
+  ClipBridge.Core/   协议模型、SHA-256、dedup/tracker 缓存、RelayClient、SyncEngine（无 UI，可单测）
+  ClipBridge.Win/    最小托盘宿主：隐藏窗口 + WM_CLIPBOARDUPDATE + STA 剪贴板访问
+tests/
+  ClipBridge.Core.Tests/  xunit 单测（hash / dedup / 引擎 / API client / config / 日志脱敏）
+```
+
+## 手动剪贴板集成验证（OS 剪贴板难以自动化）：
+
+1. `Set-Clipboard "test"` → 客户端日志出现 `clip_uploaded`，relay 收到 201；
+2. 用 API 以另一 device_id POST → 数秒内系统剪贴板更新，日志出现 `clip_applied`；
+3. 确认没有针对同一内容的重复 `clip_uploaded`（loop 防护生效）；
+4. 复制图片 → 无任何上传日志（安全忽略，不崩溃）。

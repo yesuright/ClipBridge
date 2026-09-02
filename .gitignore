@@ -1,0 +1,40 @@
+# --- C# / .NET ---
+apps/windows/**/bin/
+apps/windows/**/obj/
+apps/windows/**/*.user
+apps/windows/**/*.suo
+.vs/
+*.userprefs
+TestResults/
+
+# --- Python ---
+services/relay/.venv/
+services/relay/**/__pycache__/
+services/relay/**/*.pyc
+services/relay/.pytest_cache/
+services/relay/.mypy_cache/
+
+# --- Secrets / local config (NEVER commit real secrets) ---
+.env
+.env.*
+!.env.example
+services/relay/.env
+apps/windows/*.env
+*.local.json
+config.local.json
+
+# --- Runtime data ---
+services/relay/data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+logs/
+
+# --- Editor / OS ---
+.vscode/*
+!.vscode/settings.json.example
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
