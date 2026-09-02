@@ -231,6 +231,71 @@ public class SyncEngineTests : IDisposable
         Assert.Equal(0, _clipboard.SetCount);
     }
 
+    // ------------------------------------------------- Milestone 2: device routing
+
+    [Fact]
+    public async Task IphonePost_IsAppliedToWindowsClipboard()
+    {
+        _relay.History = new List<ClipRecord> { RemoteClip("Hello from iPhone", "clip-ip-1", device: "iphone") };
+        var applied = await _engine.CheckForRemoteAsync();
+        Assert.True(applied);
+        Assert.Equal("Hello from iPhone", _clipboard.Text);
+        Assert.Equal(1, _clipboard.SetCount);
+    }
+
+    [Fact]
+    public async Task IpadPost_IsAppliedToWindowsClipboard()
+    {
+        _relay.History = new List<ClipRecord> { RemoteClip("Hello from iPad", "clip-pad-1", device: "ipad") };
+        var applied = await _engine.CheckForRemoteAsync();
+        Assert.True(applied);
+        Assert.Equal("Hello from iPad", _clipboard.Text);
+        Assert.Equal(1, _clipboard.SetCount);
+    }
+
+    [Fact]
+    public async Task OwnDeviceClipInFront_RemoteStillSelected()
+    {
+        // Newest record is our own device (filtered), next newest is iphone -> iphone applies.
+        var own = RemoteClip("own", "clip-own-1", device: "windows-main") with
+        { ReceivedAt = "2025-06-01T12:00:20.000Z" };
+        var iphone = RemoteClip("from iphone", "clip-ip-2", device: "iphone") with
+        { ReceivedAt = "2025-06-01T12:00:10.000Z" };
+        _relay.History = new List<ClipRecord> { own, iphone };
+
+        var applied = await _engine.CheckForRemoteAsync();
+        Assert.True(applied);
+        Assert.Equal("from iphone", _clipboard.Text);
+    }
+
+    [Fact]
+    public async Task NewestRemoteAmongSeveralDevices_Wins()
+    {
+        var ipad = RemoteClip("from ipad", "clip-pad-2", device: "ipad") with
+        { ReceivedAt = "2025-06-01T12:00:15.000Z" };
+        var iphone = RemoteClip("from iphone", "clip-ip-3", device: "iphone") with
+        { ReceivedAt = "2025-06-01T12:00:10.000Z" };
+        var own = RemoteClip("own", "clip-own-2", device: "windows-main") with
+        { ReceivedAt = "2025-06-01T12:00:30.000Z" };
+        _relay.History = new List<ClipRecord> { own, ipad, iphone };
+
+        var applied = await _engine.CheckForRemoteAsync();
+        Assert.True(applied);
+        Assert.Equal("from ipad", _clipboard.Text); // newest remote, oldest listed last
+    }
+
+    [Fact]
+    public async Task CustomDeviceIds_AreHandledWithoutHardcoding()
+    {
+        // Device ids are free-form; the engine must not assume "iphone"/"ipad" strings.
+        var tony = RemoteClip("tony clipboard", "clip-tony-1", device: "tony-iphone");
+        _relay.History = new List<ClipRecord> { tony };
+        var applied = await _engine.CheckForRemoteAsync();
+        Assert.True(applied);
+        Assert.Equal("tony clipboard", _clipboard.Text);
+        Assert.Equal("windows-main", _config.DeviceId);
+    }
+
     [Fact]
     public async Task CorruptRemoteHash_IsSkipped()
     {

@@ -1,94 +1,97 @@
 # Apple Shortcuts — SEND_TO_CLIPBRIDGE
 
-把 iPhone / iPad 当前剪贴板文本发送到 Windows：POST 到 ClipBridge relay，Windows 客户端
-几秒内收到并自动写入系统剪贴板。
+把 iPhone / iPad 当前剪贴板文本发送到 Windows：POST 到 ClipBridge relay（简化端点），
+Windows 客户端几秒内收到并自动写入系统剪贴板。
 
-> 前置：relay 已启动且 iPhone 可访问（局域网 `http://<PC-IP>:8787`，或未来 HTTPS 域名）。
-> 所有请求需 `Authorization: Bearer <CLIPBRIDGE_TOKEN>`。
+> 前置：relay 已启动且 iPhone/iPad 可访问（同一可信 Wi-Fi 的局域网
+> `http://<PC-IP>:8787`）。**本 Shortcut 只依赖 Apple 自带 Shortcuts App**，
+> 不需要 Data Jar / Scriptable / 任何第三方 App。
 
-## Shortcut 步骤
+## 为什么“几乎不要配置”
 
-1. **Get Clipboard**（获取剪贴板）
-2. **Text / JSON** 构造请求体（见下方模板）
-3. **URL** — `http://<PC-IP>:8787/api/v1/clips`（生产改为 `https://…`）
-4. **Get Contents of URL**
-   - Method: **POST**
-   - Headers: `Authorization` = `Bearer <CLIPBRIDGE_TOKEN>`；`Content-Type` = `application/json`
-   - Request Body: **JSON**（粘贴下方模板）
-5. **Get Dictionary from Input** →（可选）**Show Result**：显示 `clip_id` / `size_bytes` 确认成功
-6. 将 Shortcut 挂到 **Share Sheet / Back Tap / Home Screen** 即可日常单点使用
+Milestone 2 的 relay 新增了简化端点 `POST /api/v1/clips/shortcut`：
+Shortcut 只需要发送 `device_id` + `content` 两个字段，relay 自动生成
+`clip_id`（UUID）、`content_hash`（SHA-256）、`created_at`。
+Apple Shortcuts 没有内置的可靠 UUID 生成器，也无法方便地计算大文本的 SHA-256
+（旧方案需要 Data Jar 或几十个动作拼装）——现在整个 Send 只有 5 个动作。
 
-## 请求体模板（可直接粘贴）
+## Shortcut 步骤（“Send to ClipBridge”）
 
-```json
-{
-  "clip_id": "00000000-0000-4000-8000-000000000001",
-  "device_id": "iphone",
-  "content_type": "text/plain",
-  "content": "{{剪贴板文本}}",
-  "created_at": "2025-06-01T12:00:00.000Z",
-  "origin": "shortcut"
-}
-```
+创建新 Shortcut 时，**先加 3 个 Text 动作放在最上面**（只改这 3 处，其他永远不用动）：
 
-### 关于两个可省字段（了解即可，避免踩坑）
+1. **Text** — 名称/备注 `Relay URL`，值：`http://192.168.1.123:8787`
+   （换成 `scripts/show-lan-setup.ps1` 或 `scripts/start-lan-dev.ps1` 显示的地址；
+   结尾不要加 `/`）
+2. **Text** — 名称/备注 `Bearer Token`，值：`<你的 CLIPBRIDGE_TOKEN>`
+   （从 `services\relay\.env` 读取，或重新生成：
+   `python -c "import secrets; print(secrets.token_hex(32))"`；无真实 token 别截图/分享）
+3. **Text** — 名称/备注 `My Device ID`，值：`iphone`（iPad 用 `ipad`；
+   也可以自定义如 `tony-iphone`，只能含字母数字 `_` `-`，字母数字开头）
 
-- `content_hash`：**省略**。relay 会自动计算并返回标准 SHA-256；只有需要校验完整性时才提供。
-- `clip_id`：relay 要求合法 **UUID**（短横线 8-4-4-4-12）。Shortcuts 没有内建 UUID 生成器，
-  最省事且可靠的方案是用 **Data Jar**（免费 App）存一个自增数字，每次 +1，再拼成
-  `00000000-0000-4000-8000-` + 12 位补零数字（如 `…8000-000000000042`）——格式合法且保证唯一。
-  若不想装 Data Jar：用 Scriptable/a-Shell 一行脚本生成 UUID，或用「Random Number」→
-  「Format Number」→ 拼进 4 段（略繁琐）；Data Jar 最稳。
-- `created_at`：可省略（relay 用服务器时间），想记录手机本地时刻就用
-  **Current Date → Format Date → ISO 8601 with timezone**。
+然后按顺序连：
 
-## curl 等价（完整字段示例）
+4. **Get Clipboard**（获取剪贴板）
+5. **If** (Clipboard) has any value —— 剪贴板为空时的处理，避免发空内容
+   - **Otherwise** → **Notification** “Clipboard is empty”
+6. **Get Contents of URL**（获取 URL 内容）
+   - Method：**POST**
+   - URL：`[Relay URL]/api/v1/clips/shortcut`（点 URL 字段，插入上面的 Relay URL 变量）
+   - Headers（请求头）：
+     - `Authorization` = `Bearer [Bearer Token]`（用变量拼：先输入 `Bearer ` 再插入变量）
+     - `Content-Type` = `application/json`
+   - 展开 **Request Body**，选择 **JSON**，编辑 JSON 字段（字典形式）：
+     - 键 `device_id` ← Text 变量 `My Device ID`
+     - 键 `content` ← 变量 `Clipboard`
+     - **不要手动写 JSON 字符串模板**：用字典输入，引号/换行/emoji 才会被 Shortcuts
+       正确转义（原样发送，内容永不改动）
+7. （可选）**Get Dictionary from Input** → **Get Value for Key** `size_bytes`
+   → **Notification** `Sent <size_bytes> bytes`
+8. 把 Shortcut 加到 **主屏幕 / 操作按钮 / 共享面板**，日常就是：复制 → 点一下。
 
-```bash
-curl -X POST http://127.0.0.1:8787/api/v1/clips \
-  -H "Authorization: Bearer $CLIPBRIDGE_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "clip_id": "00000000-0000-4000-8000-000000000001",
-    "device_id": "iphone",
-    "content_type": "text/plain",
-    "content": "Hello from iPhone",
-    "created_at": "2025-06-01T12:00:00.000Z",
-    "origin": "shortcut"
-  }'
-```
+> 所有配置只在创建时做一次；以后每次使用不输入任何东西。
 
-## 预期响应（201 Created）
+### 关于 JSON 转义（重要）
+
+不要在“Text”里手工构造 `{"device_id":"iphone","content":"..."}`——内容是换行、
+引号、反斜杠、emoji 时会出错。**必须**用 Get Contents of URL 的
+Request Body = JSON（字典输入），Shortcuts 会自动转义，保证 UTF-8 与内容 100% 原样。
+
+## 预期响应（201 Created，relay 生成全部元数据）
 
 ```json
 {
-  "clip_id": "00000000-0000-4000-8000-000000000001",
+  "clip_id": "3d27c1e2-...（服务器生成 UUID）",
   "device_id": "iphone",
   "content_type": "text/plain",
   "content": "Hello from iPhone",
-  "content_hash": "66514bde972fda44f3f9dc2c8fdea929761886b2d1fdb0a873b4f43571a88e42",
-  "created_at": "2025-06-01T12:00:00.000Z",
+  "content_hash": "66514bde...（服务器计算 SHA-256）",
+  "created_at": "2025-06-01T12:00:03.412Z",
   "received_at": "2025-06-01T12:00:03.412Z",
   "origin": "shortcut",
   "size_bytes": 17
 }
 ```
 
+curl 等价：
+
+```bash
+curl -X POST http://192.168.1.123:8787/api/v1/clips/shortcut \
+  -H "Authorization: Bearer $CLIPBRIDGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"device_id":"iphone","content":"Hello from iPhone"}'
+```
+
 ## 错误速查
 
-| Status | 含义 |
+| 结果 | 含义 |
 | --- | --- |
-| 401 | token 错误（检查 `CLIPBRIDGE_TOKEN` 与 Header） |
-| 413 | 内容超过 2 MiB |
-| 409 `duplicate_clip_id` | 用了同一个 `clip_id`（重试/重发时有用，不算错；需换新 UUID） |
-| 409 `duplicate_content_in_window` | 15 秒内同一设备发过完全相同内容（去重窗口=防循环） |
-| 422 / 400 / 415 | 字段格式错误（`clip_id` 不是 UUID、`content_type` 不是 text/plain 等） |
-
-错误响应均为 `{"error":"...","detail":...}` JSON。
+| 401 | token 错（检查 Bearer Token 变量） |
+| 413 | 内容超过 2 MiB（截断发送前本地就已禁止） |
+| 409 | 15 秒内同一设备发过完全相同内容（视为已发送，不重复） |
+| 422 / 415 | `device_id` 格式错 / `content_type` 非 text/plain |
+| 连接失败 | 见 `docs/DEVICE_TEST.md` 的 Troubleshooting（防火墙/网络/IP） |
 
 ## 验证
 
-发出后 2–5 秒内 Windows 剪贴板应为该文本。若不行：
-1. Safari 打开 `http://<PC-IP>:8787/api/v1/health` 确认可达；
-2. 看 relay 日志 `services/relay/data/logs/relay.log`（只记录 clip_id/size/hash 前缀，无正文）；
-3. 确认 Windows 客户端托盘图标存在、客户端 `client.log` 无 poll 报错。
+发出后 2–5 秒内 Windows 剪贴板应为该文本。若不行，按 `docs/DEVICE_TEST.md`
+的排障清单逐项检查（先用 Safari 打开 `http://<PC-IP>:8787/api/v1/health`）。

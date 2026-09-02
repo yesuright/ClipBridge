@@ -4,13 +4,17 @@ Endpoints (all /api/v1/* except /health require `Authorization: Bearer <token>`)
 
 - GET  /api/v1/health                     -> {"status": "ok"}            (no auth)
 - POST /api/v1/clips                      -> 201 ClipOut | 400/401/409/413/415/422
+- POST /api/v1/clips/shortcut            -> 201 ClipOut | 400/401/409/413/415/422
 - GET  /api/v1/clips/latest               -> 200 ClipOut | 404 | 401
+       (optional ?exclude_device_id=iphone filters by source device)
 - GET  /api/v1/clips?limit=N              -> 200 {"clips": [ClipOut], "count": N} | 401
+       (optional ?exclude_device_id=iphone)
 - GET  /api/v1/clips/{clip_id}            -> 200 ClipOut | 404 | 401
 """
 from __future__ import annotations
 
 import logging
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
@@ -21,7 +25,14 @@ from pydantic import ValidationError
 from . import __version__
 from .config import Settings, load_settings, resolve_path
 from .logging_setup import log_clip_created, log_clip_rejected
-from .models import ApiError, ClipCreate, TEXT_PLAIN, canonical_iso
+from .models import (
+    ApiError,
+    ClipCreate,
+    DEVICE_ID_RE,
+    ShortcutClipCreate,
+    TEXT_PLAIN,
+    canonical_iso,
+)
 from .security import compute_content_hash, is_bearer_token_valid
 from .storage import (
     ClipRecord,
@@ -119,51 +130,54 @@ def create_app(settings: Settings | None = None, store: ClipStore | None = None)
     def health():
         return {"status": "ok", "service": "clipbridge-relay", "version": __version__}
 
-    @app.post("/api/v1/clips", status_code=201)
-    async def create_clip(request: Request, _: None = Auth):
+    def _validate_exclude_device_id(exclude_device_id: str | None) -> str | None:
+        """Query-param validation: device ids are never hardcoded server-side, but the
+        value must still be a well-formed device id."""
+        if exclude_device_id is None:
+            return None
+        if not DEVICE_ID_RE.match(exclude_device_id):
+            raise ApiError(
+                422, "invalid_payload",
+                detail=[{"loc": ["query", "exclude_device_id"], "msg": "must be 1-64 chars of [A-Za-z0-9_-], starting with alphanumeric", "type": "value_error"}],
+            )
+        return exclude_device_id
+
+    def _create_record(  # noqa: C901 — one shared insertion path for both create endpoints
+        request: Request,
+        *,
+        clip_id: str,
+        device_id: str,
+        content: str,
+        content_type: str,
+        origin: str,
+        created_at: str | None,
+        provided_hash: str | None,
+    ) -> dict:
+        """Shared validation + storage path for POST /clips and POST /clips/shortcut."""
         settings: Settings = request.app.state.settings
-        try:
-            raw = await request.json()
-        except Exception:
-            raise ApiError(400, "invalid_json")
-
-        if not isinstance(raw, dict):
-            raise ApiError(400, "invalid_payload", detail="body must be a JSON object")
-
-        # Distinct 415 for non-text content (explicit check before schema validation).
-        if raw.get("content_type") not in (None, TEXT_PLAIN):
-            raise ApiError(415, "unsupported_content_type", supported=[TEXT_PLAIN])
-
-        try:
-            payload = ClipCreate.model_validate(raw)
-        except ValidationError as exc:
-            raise ApiError(422, "invalid_payload", detail=_safe_validation_errors(exc.errors()))
 
         # The authoritative size limit is the UTF-8 byte length of the content.
-        size_bytes = len(payload.content.encode("utf-8"))
+        size_bytes = len(content.encode("utf-8"))
         if size_bytes > settings.max_content_bytes:
             raise ApiError(
                 413, "content_too_large",
                 max_bytes=settings.max_content_bytes, actual_bytes=size_bytes,
             )
 
-        computed_hash = compute_content_hash(payload.content)
-        if payload.content_hash is not None and payload.content_hash.lower() != computed_hash:
+        computed_hash = compute_content_hash(content)
+        if provided_hash is not None and provided_hash.lower() != computed_hash:
             raise ApiError(422, "hash_mismatch",
-                           provided=payload.content_hash, computed=computed_hash)
-
-        created_at = canonical_iso(payload.created_at) if payload.created_at else utc_now_iso()
-        received_at = utc_now_iso()
+                           provided=provided_hash, computed=computed_hash)
 
         record = ClipRecord(
-            clip_id=payload.clip_id,
-            device_id=payload.device_id,
-            content_type=payload.content_type,
-            content=payload.content,
+            clip_id=clip_id,
+            device_id=device_id,
+            content_type=content_type,
+            content=content,
             content_hash=computed_hash,
-            created_at=created_at,
-            received_at=received_at,
-            origin=payload.origin,
+            created_at=created_at or utc_now_iso(),
+            received_at=utc_now_iso(),
+            origin=origin,
             size_bytes=size_bytes,
         )
 
@@ -186,19 +200,88 @@ def create_app(settings: Settings | None = None, store: ClipStore | None = None)
                          origin=record.origin)
         return record.to_dict()
 
+    @app.post("/api/v1/clips", status_code=201)
+    async def create_clip(request: Request, _: None = Auth):
+        try:
+            raw = await request.json()
+        except Exception:
+            raise ApiError(400, "invalid_json")
+
+        if not isinstance(raw, dict):
+            raise ApiError(400, "invalid_payload", detail="body must be a JSON object")
+
+        # Distinct 415 for non-text content (explicit check before schema validation).
+        if raw.get("content_type") not in (None, TEXT_PLAIN):
+            raise ApiError(415, "unsupported_content_type", supported=[TEXT_PLAIN])
+
+        try:
+            payload = ClipCreate.model_validate(raw)
+        except ValidationError as exc:
+            raise ApiError(422, "invalid_payload", detail=_safe_validation_errors(exc.errors()))
+
+        return _create_record(
+            request,
+            clip_id=payload.clip_id,
+            device_id=payload.device_id,
+            content=payload.content,
+            content_type=payload.content_type,
+            origin=payload.origin,
+            created_at=canonical_iso(payload.created_at) if payload.created_at else None,
+            provided_hash=payload.content_hash,
+        )
+
+    @app.post("/api/v1/clips/shortcut", status_code=201)
+    async def create_shortcut_clip(request: Request, _: None = Auth):
+        """Minimal create for Apple Shortcuts: the server generates clip_id / hash / created_at.
+
+        Keeps the stored record protocol-identical to POST /clips (same canonical ClipOut,
+        same dedup window, same limits, same error codes). See docs/PROTOCOL.md §3b.
+        """
+        try:
+            raw = await request.json()
+        except Exception:
+            raise ApiError(400, "invalid_json")
+
+        if not isinstance(raw, dict):
+            raise ApiError(400, "invalid_payload", detail="body must be a JSON object")
+
+        # Distinct 415 for non-text content (explicit check before schema validation).
+        if raw.get("content_type") not in (None, TEXT_PLAIN):
+            raise ApiError(415, "unsupported_content_type", supported=[TEXT_PLAIN])
+
+        try:
+            payload = ShortcutClipCreate.model_validate(raw)
+        except ValidationError as exc:
+            raise ApiError(422, "invalid_payload", detail=_safe_validation_errors(exc.errors()))
+
+        return _create_record(
+            request,
+            clip_id=str(uuid.uuid4()),
+            device_id=payload.device_id,
+            content=payload.content,
+            content_type=payload.content_type,
+            origin=payload.origin,
+            created_at=None,  # server time — Shortcuts should not have to compute timestamps
+            provided_hash=None,  # server computes the canonical SHA-256
+        )
+
     @app.get("/api/v1/clips/latest")
-    def latest_clip(request: Request, _: None = Auth):
+    def latest_clip(request: Request, exclude_device_id: str | None = None, _: None = Auth):
         store: ClipStore = request.app.state.store
-        record = store.latest()
+        excluded = _validate_exclude_device_id(exclude_device_id)
+        record = store.latest_excluding(excluded) if excluded is not None else store.latest()
         if record is None:
             raise ApiError(404, "not_found")
         return record.to_dict()
 
     @app.get("/api/v1/clips")
-    def recent_clips(request: Request, limit: int = 50, _: None = Auth):
+    def recent_clips(request: Request, limit: int = 50, exclude_device_id: str | None = None,
+                     _: None = Auth):
         store: ClipStore = request.app.state.store
         limit = max(1, min(limit, 200))
-        clips = store.recent(limit)
+        excluded = _validate_exclude_device_id(exclude_device_id)
+        clips = (store.recent_excluding(limit, excluded)
+                 if excluded is not None else store.recent(limit))
         return {"count": len(clips), "clips": [c.to_dict() for c in clips]}
 
     @app.get("/api/v1/clips/{clip_id}")

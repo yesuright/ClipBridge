@@ -1,24 +1,26 @@
-# ClipBridge Architecture (Milestone 1)
+# ClipBridge Architecture (Milestone 2)
 
 ## 1. Components
 
 ```text
 ┌──────────────────────────┐        ┌──────────────────────────┐
 │  Windows 11 PC           │        │  iPhone / iPad           │
-│  ClipBridge.Win (tray)   │        │  Apple Shortcuts or Web  │
-│  - hidden window +       │        │  (V1: no native app)     │
-│    WM_CLIPBOARDUPDATE    │        └───────────┬──────────────┘
-│  - SyncEngine (Core)     │                    │ HTTPS (future) /
-│  - RelayClient (HTTP)    │                    │ HTTP localhost (now)
+│  ClipBridge.Win (tray)   │        │  Apple Shortcuts         │
+│  - hidden window +       │        │  Send: POST /clips/shortcut
+│    WM_CLIPBOARDUPDATE    │        │  Get:  GET /clips/latest
+│  - SyncEngine (Core)     │        │        ?exclude_device_id=self
+│  - RelayClient (HTTP)    │        └───────────┬──────────────┘
 └───────────┬──────────────┘                    │
-            │  POST /api/v1/clips               │
-            │  GET  /api/v1/clips?limit=N       │
-            ▼                                   ▼
+            │  POST /api/v1/clips               │ LAN mode: plain HTTP on
+            │  GET  /api/v1/clips?limit=N       │ the private Wi-Fi (opt-in;
+            ▼                                   ▼ default = loopback only)
 ┌────────────────────────────────────────────────────────┐
 │  Relay (services/relay)                                │
 │  FastAPI app  →  auth (Bearer token)  →  ClipStore     │
 │                                       (SQLite, WAL)    │
 │  history: last 50 clips, newest first                 │
+│  M2: /clips/shortcut (server-generated IDs)           │
+│      ?exclude_device_id=... read filter (stateless)   │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -27,7 +29,21 @@
 | `ClipBridge.Win` | hidden window clipboard listener, tray shell, STA marshalling | C#/.NET 8 + WinForms |
 | `ClipBridge.Core` | hashing, dedup/caches, relay client, sync engine (unit-testable) | C#/.NET 8 classlib |
 | Relay API | REST endpoints, auth, validation, size limits | Python 3.13 + FastAPI |
-| ClipStore | persistent clip storage, pruning | stdlib `sqlite3` (WAL) |
+| ClipStore | persistent clip storage, pruning, exclusion queries | stdlib `sqlite3` (WAL) |
+
+### Milestone 2 additions
+
+- **Explicit LAN mode** (`CLIPBRIDGE_BIND_HOST=0.0.0.0`; loopback is the default).
+  The relay prints a security notice when bound beyond loopback. No firewall/router
+  changes are ever made by ClipBridge — detection only, user acts manually.
+- **Simplified Shortcut create** (`POST /api/v1/clips/shortcut`): Apple Shortcuts send
+  only `device_id` + `content`; the relay generates `clip_id` (UUID4), `content_hash`
+  and `created_at`. Rationale: Shortcuts cannot reliably generate UUIDs or compute
+  SHA-256 natively, and the previous draft needed a third-party app (Data Jar) —
+  removed. The stored record is canonical (same schema, limits, dedup).
+- **Requester-exclusion read filter**: `GET /clips/latest?exclude_device_id=<id>` (and
+  the same param on `/clips`). Stateless query-level filter, no per-device server
+  state; stores learn nothing about requesters; POST/dedup semantics untouched.
 
 ## 2. Data flow
 
@@ -63,6 +79,26 @@ poll every PollIntervalMs (default 2 s; 0.5–60 s clamp)
   → Clipboard.SetText (bounded 5 retries with backoff on clipboard busy)
   → the resulting WM_CLIPBOARDUPDATE echo is suppressed by step above → NO loop
 ```
+
+### iPhone/iPad (Apple Shortcuts, Milestone 2)
+
+```
+Send:  Get Clipboard
+       → POST /api/v1/clips/shortcut {"device_id":"iphone","content":<clipboard>}
+           (Authorization: Bearer <token>; server generates clip_id/hash/created_at)
+       → 201 -> optional notification (size_bytes/device_id)
+
+Get:   GET /api/v1/clips/latest?exclude_device_id=iphone   (Authorization: Bearer <token>)
+       → 200 {content,...} -> Set Clipboard (content field verbatim)
+       → 404 -> "no content from other devices" (Shortcut branches on this)
+       (fallback variant: GET /api/v1/clips?limit=10&exclude_device_id=iphone
+        -> always 200; empty "clips" list = nothing new)
+```
+
+The Shortcuts contain NO dynamic fields except the three configured once at creation
+(URL, token, device id). The device id is a free-form string — the phone's shortcut
+uses its own id (`iphone`/`ipad`/`tony-iphone`...), so `exclude_device_id` keeps each
+device from fetching its own clipboard back.
 
 ### UI (Minimal, Milestone 1)
 
@@ -161,3 +197,12 @@ configurable via env/config. A relay restart is handled naturally (next poll suc
 - Client: tray-only, no visible window; clipboard listener is event-driven (no polling);
   idle CPU ≈ 0%; RAM low (one HTTP client + string buffers).
 - Relay: single uvicorn process, single SQLite connection; no background workers.
+- LAN reads are stateless — the relay keeps no requester state, so iPhone/iPad can
+  poll at their own pace without server-side memory growth.
+
+## 9. Roadmap pointer
+
+- Shortcuts guide: `shortcuts/SEND_TO_CLIPBRIDGE.md`, `shortcuts/GET_FROM_CLIPBRIDGE.md`.
+- Manual device test: `docs/DEVICE_TEST.md`.
+- Remote access (HTTPS / tunnel / E2E encryption / pairing) is explicitly NOT part of
+  this milestone; it is designed later (see SECURITY.md §7).

@@ -1,21 +1,42 @@
-# ClipBridge Protocol v1 (Milestone 1)
+# ClipBridge Protocol v1 (Milestone 2)
 
 All endpoints use **JSON, UTF-8, UTC ISO 8601 (RFC 3339)** timestamps with `Z` suffix,
 e.g. `2025-06-01T12:00:00.123Z`.
 
 Base URL: `http://127.0.0.1:8787` (dev) — production MUST be HTTPS (see SECURITY.md).
+LAN mode for iPhone/iPad: `http://<PC-LAN-IP>:8787` (same trusted Wi-Fi; see DEVICE_TEST.md).
 
 ## 1. Endpoints
 
 | Method | Path | Auth | Description | Success |
 | --- | --- | --- | --- | --- |
 | GET | `/api/v1/health` | no | liveness | 200 `{"status":"ok", ...}` |
-| POST | `/api/v1/clips` | yes | create a clip | 201 Clip |
+| POST | `/api/v1/clips` | yes | create a clip (canonical, client-generated IDs) | 201 Clip |
+| POST | `/api/v1/clips/shortcut` | yes | create a clip (Minimal schema; server generates IDs) | 201 Clip |
 | GET | `/api/v1/clips/latest` | yes | newest clip overall | 200 Clip / 404 |
+| GET | `/api/v1/clips/latest?exclude_device_id=<id>` | yes | newest clip NOT from `<id>` | 200 Clip / 404 |
 | GET | `/api/v1/clips?limit=N` | yes | recent history, newest first | 200 `{"count":N,"clips":[...]}` |
+| GET | `/api/v1/clips?limit=N&exclude_device_id=<id>` | yes | recent history excluding one device | 200 `{"count":N,"clips":[...]}` |
 | GET | `/api/v1/clips/{clip_id}` | yes | single clip | 200 Clip / 404 |
 
 `limit`: default 50, clamped to 1–200.
+
+`exclude_device_id` (Milestone 2): read-side filter for "get the newest clip from
+*other* devices" — exactly what an iPhone Shortcut needs so it never re-fetches its
+own clipboard. Rules:
+
+- The value must match the device-id grammar (1–64 chars `[A-Za-z0-9_-]`, alphanumeric
+  start); anything else → **422**.
+- The filter applies to **queries only** and is **stateless** — no per-device server
+  state, no sessions, no "last seen" tracking. Two requests with the same param get
+  the same result until new clips arrive.
+- It never affects `POST` behaviour: dedup, idempotency and the 15 s window consider
+  ALL records including the requester's own (loop prevention stays intact).
+- Device ids are never hardcoded server-side; any valid id from any device works
+  (`iphone`, `ipad`, `tony-iphone`, `windows-main`, ...).
+- When no clip from another device exists, the read returns **404 `not_found`**
+  (`latest`) or an **empty list** (`/clips` — always 200), so Shortcuts can branch
+  on "no new content" cleanly.
 
 ## 2. Authentication
 
@@ -56,6 +77,54 @@ Base URL: `http://127.0.0.1:8787` (dev) — production MUST be HTTPS (see SECURI
 Notes:
 - `content` is never truncated anywhere in the pipeline (JSON parse → size check → SQLite TEXT).
 - Neither `content` nor `content_hash` full values appear in logs (only `hash_prefix` = first 8 chars).
+
+## 3b. Minimized create request for Apple Shortcuts
+
+`POST /api/v1/clips/shortcut` accepts **only** `device_id` + `content` (+ optional
+`content_type` / `origin`) and the server derives `clip_id`, `content_hash` and
+`created_at`. The stored record is **protocol-identical** to the canonical endpoint:
+same ClipOut schema, same 2 MiB limit, same dedup window, same error codes.
+
+| Field | Required | Default | Rules |
+| --- | --- | --- | --- |
+| `device_id` | yes | — | same as canonical |
+| `content` | yes | — | ≤ 2 MiB UTF-8 bytes (else 413) |
+| `content_type` | optional | `text/plain` | only `text/plain` (else 415) |
+| `origin` | optional | `shortcut` | 0–64 chars `[A-Za-z0-9._-]` |
+| `clip_id`, `content_hash`, `created_at` | **not accepted — always server-generated** | | |
+
+```http
+POST /api/v1/clips/shortcut
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{"device_id": "iphone", "content": "Hello from iPhone"}
+```
+
+Response: `201` with the full canonical Clip (incl. server-generated `clip_id`,
+`content_hash`, `created_at`, `size_bytes`).
+
+Why: Apple Shortcuts has no built-in, reliable UUID generator (the usual workarounds
+need a third-party app like Data Jar, or brittle Random-Number/string assembly) and
+cannot practically compute SHA-256 of a large clipboard. Moving those derivations to
+the relay keeps a Shortcut at ~5 actions with no third-party dependency.
+
+Evaluation (Milestone 2):
+
+- **Protocol consistency**: request schema is a strict subset; response is the
+  canonical Clip; storage/history/dedup are the same code path (`origin=shortcut`
+  marks these records).
+- **Spoofing**: `device_id` remains a client-declared string (already documented as
+  not-authenticated identity); the endpoint is gated by the same shared bearer token;
+  clip ids are server-generated UUIDs, so no collision-based overwrite is possible.
+  No new trust boundary is introduced.
+- **Loop prevention**: unchanged — same 15 s same-device/content dedup window; the
+  Windows client filters its own `device_id` and echo trackers; iPhone/iPad Get
+  shortcuts use `exclude_device_id` to skip their own records.
+- **Idempotency**: server-generated clip ids mean a failed HTTP retry after a
+  successful POST is de-duplicated by the 15 s window (409) instead of the clip_id
+  key. That is acceptable for a personal tool and documented in the Shortcuts guide;
+  retries within the window are treated as "already sent".
 
 ## 4. Hashes
 
@@ -130,13 +199,13 @@ Uniform shape: `{"error": "<error_code>", ...extra fields}`.
 | --- | --- | --- | --- |
 | 400 | `invalid_json` / `bad_request` | body not parseable / wrong shape | `detail` |
 | 401 | `unauthorized` | missing or wrong token | — |
-| 404 | `not_found` | no clip / no history | — |
+| 404 | `not_found` | no clip / no history / no clip from another device | — |
 | 409 | `duplicate_clip_id` | clip_id already stored | `clip_id` |
 | 409 | `duplicate_content_in_window` | same device + same content within window | `clip_id` (existing) |
 | 413 | `content_too_large` | content > 2 MiB | `max_bytes`, `actual_bytes` |
 | 413 | `body_too_large` | HTTP body > 16 MiB (JSON escape guard) | `max_bytes` |
 | 415 | `unsupported_content_type` | content_type ≠ text/plain | `supported` |
-| 422 | `invalid_payload` | schema/validation failure | `detail` (loc/msg/type) |
+| 422 | `invalid_payload` | schema/validation failure (incl. bad `exclude_device_id`) | `detail` (loc/msg/type) |
 | 422 | `hash_mismatch` | provided content_hash ≠ server-computed | `provided`, `computed` |
 | 500 | `internal_error` | unexpected server error (content never logged) | — |
 

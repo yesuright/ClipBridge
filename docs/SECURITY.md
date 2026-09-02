@@ -1,4 +1,4 @@
-# ClipBridge Security (Milestone 1)
+# ClipBridge Security (Milestone 2)
 
 This is a personal tool whose payloads can contain prompts, code, logs, private text.
 The security baseline below is in place from day 1; deeper measures (E2E encryption) are a
@@ -52,17 +52,45 @@ cannot smuggle multiline content into the log file. Log redaction is **tested**
 Dev note: relay access lines are uvicorn's default (method/path/status) — paths contain no
 tokens because auth is header-based and clip content is in the body, never the URL.
 
-## 4. Network: localhost vs HTTPS
+## 4. Network: localhost vs LAN vs HTTPS
 
-- **Milestone 1**: `CLIPBRIDGE_HOST=127.0.0.1` — everything is local.
-- **Production direction**: deploy the same app with:
-  - bind `0.0.0.0` behind a TLS terminator (Caddy/nginx/cloud LB) or FastAPI behind uvicorn
-    with TLS, **HTTPS only**;
-  - keep the token auth on top (header);
-  - client config `RelayUrl: https://relay.example.com`.
-- The protocol has no plaintext-over-Internet assumption: auth is a header token, payloads are
-  JSON — a `https://` base URL is purely a configuration change. **No HTTP fallback in
-  production mode is implemented or suggested.**
+### 4.1 Localhost (default, safe)
+
+`CLIPBRIDGE_BIND_HOST=127.0.0.1` (default; the Milestone 1 alias `CLIPBRIDGE_HOST`
+still works). Reachable from this machine only. This is the ONLY default — the relay
+**never** exposes the LAN without an explicit configuration change.
+
+### 4.2 LAN plain HTTP — trusted local-network development / personal-use mode ONLY
+
+iPhone/iPad Shortcuts need to reach the PC, so Milestone 2 adds an explicit LAN mode:
+`CLIPBRIDGE_BIND_HOST=0.0.0.0` (or a specific private LAN interface). Positioning:
+
+- The bearer token **travels unencrypted over plain HTTP** on your LAN. It is not
+  transport-encrypted in any way. Anyone on the same network who can sniff frames
+  (or who can reach the port) can read it and every clipboard text you sync.
+- **Not suitable for untrusted Wi-Fi** (airport, hotel, café, shared networks) and
+  **never suitable for the public Internet**.
+- **Do NOT do router port forwarding or DMZ for this port.** Do NOT expose it outbound.
+- Production or any remote usage MUST use HTTPS or an equivalent secure tunnel
+  (TLS-terminating reverse proxy, VPN such as Tailscale/WireGuard, or SSH tunnel).
+  The protocol is transport-agnostic: a `https://` base URL is a config change only.
+- This LAN mode is **not** the final security story — it exists so three personal
+  devices can be tested on one trusted Wi-Fi. See §7 for the E2E-encryption direction.
+- The relay prints a prominent warning when it starts bound to a non-loopback
+  address; the LAN helper scripts repeat it and never print the token.
+
+### 4.3 The relay itself never modifies your network
+
+ClipBridge does **not** create firewall rules, disable the firewall, touch Defender,
+change router/Wi-Fi settings, or do port forwarding — by design. The LAN scripts
+(`scripts/show-lan-setup.ps1`, `scripts/start-lan-dev.ps1`) only *detect* and *tell*
+you, and print the exact manual step (as Administrator) if a rule is needed. If the
+Windows firewall blocks the iPhone/iPad, the status is `MANUAL NETWORK STEP
+REQUIRED` — the operator decides, not the tool.
+
+```text
+NOT SUPPORTED: plain-HTTP LAN is a local-network convenience, not an Internet model.
+```
 
 ## 5. Clipboard sensitivity
 
@@ -73,7 +101,7 @@ tokens because auth is header-based and clip content is in the body, never the U
 - Long prompts are stored server-side in plaintext (SQLite file). The DB is local-only in M1;
   restrict file permissions / protect the disk as you would any personal data.
 
-## 6. Known limitations (M1)
+## 6. Known limitations (M2)
 
 - Shared token for all devices — no per-device keys; anyone with the token can read/write all
   history. (Personal use, single trust boundary.)
@@ -83,6 +111,11 @@ tokens because auth is header-based and clip content is in the body, never the U
 - The relay stores plaintext clipboard content and it is not E2E encrypted.
 - `origin`/`device_id` are client-declared strings — not authenticated identity.
 - Windows clipboard is world-readable by design of the OS; any process can read what we write.
+- LAN plain HTTP: no transport encryption (see §4.2) — acceptable only on a trusted
+  private network, never the Internet.
+- `GET /clips/latest?exclude_device_id=` trusts the caller to send the correct own
+  device id — it is an ergonomic filter, not an identity check. A malicious client
+  with the token can pass any id; the shared-token model already implies that trust.
 
 ## 7. Future direction: E2E encryption (design reserved, not implemented)
 

@@ -86,7 +86,15 @@ class ClipStore(abc.ABC):
     def latest(self) -> ClipRecord | None: ...
 
     @abc.abstractmethod
+    def latest_excluding(self, device_id: str) -> ClipRecord | None:
+        """Newest record whose source is NOT the given device. None when none exists."""
+
+    @abc.abstractmethod
     def recent(self, limit: int) -> list[ClipRecord]: ...
+
+    @abc.abstractmethod
+    def recent_excluding(self, limit: int, device_id: str) -> list[ClipRecord]:
+        """Newest-first records whose source is NOT the given device (limit clamped by caller)."""
 
     @abc.abstractmethod
     def close(self) -> None: ...
@@ -133,8 +141,24 @@ class MemoryClipStore(ClipStore):
     def latest(self) -> ClipRecord | None:
         return self._records[-1].record if self._records else None
 
+    def latest_excluding(self, device_id: str) -> ClipRecord | None:
+        for item in reversed(self._records):
+            if item.record.device_id != device_id:
+                return item.record
+        return None
+
     def recent(self, limit: int) -> list[ClipRecord]:
         return [item.record for item in self._records[-limit:]][::-1]
+
+    def recent_excluding(self, limit: int, device_id: str) -> list[ClipRecord]:
+        result: list[ClipRecord] = []
+        for item in reversed(self._records):
+            if item.record.device_id == device_id:
+                continue
+            result.append(item.record)
+            if len(result) >= limit:
+                break
+        return result
 
     def close(self) -> None:
         self._records.clear()
@@ -243,10 +267,28 @@ class SqliteClipStore(ClipStore):
             ).fetchone()
         return self._row_to_record(row) if row else None
 
+    def latest_excluding(self, device_id: str) -> ClipRecord | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM clips WHERE device_id != ? "
+                "ORDER BY received_at DESC, rowid DESC LIMIT 1",
+                (device_id,),
+            ).fetchone()
+        return self._row_to_record(row) if row else None
+
     def recent(self, limit: int) -> list[ClipRecord]:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM clips ORDER BY received_at DESC, rowid DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [self._row_to_record(r) for r in rows]
+
+    def recent_excluding(self, limit: int, device_id: str) -> list[ClipRecord]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM clips WHERE device_id != ? "
+                "ORDER BY received_at DESC, rowid DESC LIMIT ?",
+                (device_id, limit),
             ).fetchall()
         return [self._row_to_record(r) for r in rows]
 

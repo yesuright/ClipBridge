@@ -122,4 +122,24 @@ public class ClientConfigTests : IDisposable
         Assert.Equal("http://127.0.0.1:8787/api/v1",
             alreadyV1.ApiBaseUri.ToString().TrimEnd('/'));
     }
+
+    [Fact]
+    public void LanAddress_ProducesValidBaseUri()
+    {
+        // LAN mode: relay bound to 0.0.0.0, client still points at the PC's LAN IP.
+        var lan = new ClientConfig { RelayUrl = "http://192.168.1.123:8787" };
+        Assert.Equal("http://192.168.1.123:8787/api/v1/", lan.ApiBaseUri.ToString());
+
+        var lanEnv = Environment.GetEnvironmentVariable("CLIPBRIDGE_RELAY_URL");
+        try
+        {
+            Environment.SetEnvironmentVariable("CLIPBRIDGE_RELAY_URL", "http://10.0.0.42:9000");
+            var loaded = ClientConfig.Load("nonexistent-config.json");
+            Assert.Equal("http://10.0.0.42:9000/api/v1/", loaded.ApiBaseUri.ToString());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CLIPBRIDGE_RELAY_URL", lanEnv);
+        }
+    }
 }

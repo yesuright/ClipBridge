@@ -58,8 +58,16 @@ class Settings:
 
 def load_settings() -> Settings:
     _load_dotenv(SERVICE_DIR / ".env")
+    # CLIPBRIDGE_BIND_HOST is the canonical name (Milestone 2). CLIPBRIDGE_HOST is kept
+    # as a legacy alias so existing Milestone 1 .env files keep working.
+    host = os.environ.get(
+        "CLIPBRIDGE_BIND_HOST",
+        os.environ.get("CLIPBRIDGE_HOST", "127.0.0.1"),
+    )
+    if not host:
+        host = "127.0.0.1"
     return Settings(
-        host=os.environ.get("CLIPBRIDGE_HOST", "127.0.0.1"),
+        host=host,
         port=_int_env("CLIPBRIDGE_PORT", 8787),
         token=os.environ.get("CLIPBRIDGE_TOKEN") or None,
         db_path=os.environ.get("CLIPBRIDGE_DB_PATH", "data/clipbridge.db"),

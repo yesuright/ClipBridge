@@ -8,10 +8,15 @@
 | .NET SDK | 8.0 (LTS) | https://dotnet.microsoft.com/download (or `dotnet-install.ps1 -Channel 8.0 -InstallDir $env:USERPROFILE\.dotnet`; `scripts/dev-client.ps1` and `tests/e2e/run-end-to-end.ps1` automatically prefer `%USERPROFILE%\.dotnet\dotnet.exe`) |
 | Python | 3.12+ (3.13 tested) | https://www.python.org |
 
-> Network note: if nuget.org is slow on your network (common in CN), add a mirror to the
-> user-level NuGet config — e.g. a NuGet v3 source pointing at a working mirror (Huawei:
-> `https://repo.huaweicloud.com/repository/nuget/v3/index.json`). The test project restores
-> ~25 MB on first build; everything is cached afterwards.
+> Network note: if nuget.org is slow on your network (common in CN), the repo ships a
+> **repository-local** `NuGet.Config` at the repo root that adds a working mirror
+> (Huawei: `https://repo.huaweicloud.com/repository/nuget/v3/index.json`) for
+> ClipBridge projects **only**. The user-level NuGet config (`%APPDATA%\NuGet\NuGet.Config`)
+> stays untouched by the repo and was restored to its original nuget.org-only state
+> in Milestone 2 — this repo does not change global NuGet behaviour. The test project
+> restores ~25 MB on first build; everything is cached afterwards. (If a previous
+> run of this repo added a `huawei` source to the user-level config, it is safe to
+> delete that line; the backup lives at `%APPDATA%\NuGet\NuGet.Config.bak-clipbridge-m2`.)
 
 The repo pins .NET 8 via `global.json` (`rollForward: latestFeature`).
 
@@ -71,7 +76,7 @@ exit. Logs: `%APPDATA%\ClipBridge\client.log`.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `CLIPBRIDGE_HOST` | `127.0.0.1` | bind address (0.0.0.0 only behind HTTPS) |
+| `CLIPBRIDGE_BIND_HOST` | `127.0.0.1` | bind address; **LAN mode** for iPhone/iPad Shortcuts: `0.0.0.0`. `CLIPBRIDGE_HOST` (M1 name) still works as an alias. Loopback-only is the safe default — LAN exposure is opt-in |
 | `CLIPBRIDGE_PORT` | `8787` | — |
 | `CLIPBRIDGE_TOKEN` | — | **required**; fail-fast if missing |
 | `CLIPBRIDGE_DB_PATH` | `data/clipbridge.db` | relative to `services/relay/` |
@@ -94,15 +99,53 @@ exit. Logs: `%APPDATA%\ClipBridge\client.log`.
 | `CLIPBRIDGE_SUPPRESS_WINDOW_SECONDS` | `30` | applied-remote echo window |
 | `CLIPBRIDGE_UPLOAD_MEMORY_SECONDS` | `900` | own-upload echo memory |
 
+## 5b. LAN mode for iPhone/iPad (Milestone 2)
+
+One command starts everything for LAN testing:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start-lan-dev.ps1
+```
+
+This script (no firewall changes, no public exposure, no token printed):
+
+1. checks the relay venv and `services\relay\.env` (must define `CLIPBRIDGE_TOKEN`),
+2. starts the relay bound to `0.0.0.0` in this script session (your shell env is not
+   modified persistently),
+3. builds + starts the Windows tray client pointed at `http://127.0.0.1:<port>`,
+4. prints the suggested LAN URL(s) (from `scripts/lib/LanSetup.psm1`) and the security
+   notice. Ctrl+C stops both.
+
+Helpers:
+
+| Script | Purpose |
+| --- | --- |
+| `scripts/show-lan-setup.ps1` | read-only: suggests LAN URL(s), checks the listener bind address, reports whether the firewall may block inbound, prints the manual firewall step (never executes it) |
+| `scripts/start-lan-dev.ps1` | one-shot LAN dev starter (relay + client) |
+| `scripts/tests/test-lan-setup.ps1` | unit tests for the LAN helper logic (private-IP/VPN/virtual filtering), no Pester needed |
+| `scripts/dev-relay.ps1` | localhost-only relay dev runner (unchanged from M1) |
+| `scripts/dev-client.ps1` | client dev runner (unchanged from M1) |
+
+The LAN helper prioritises private IPv4 addresses and excludes loopback, APIPA,
+disconnected adapters, VPN tunnels and virtual adapters (heuristics — it lists every
+candidate and never silently picks). **It never prints the bearer token.**
+
+To test from the phone: find the LAN URL, then follow `docs/DEVICE_TEST.md`.
+
 ## 6. Tests
 
 ```powershell
-# Relay (61 tests): auth / CRUD / history / validation / long text / unicode / dedup / redaction
+# Relay (pytest): auth / CRUD / history / validation / long text / unicode / dedup /
+#   redaction / shortcut-minimized create / exclude_device_id filtering
 cd services\relay
 .\.venv\Scripts\python -m pytest
 
-# Windows Core (xunit): hashing / caches / trackers / sync engine / relay client / config / logging
+# Windows Core (xunit): hashing / caches / trackers / sync engine / relay client /
+#   config / logging / device routing
 dotnet test apps\windows\ClipBridge.sln
+
+# LAN helper logic (Windows PowerShell or PowerShell 7):
+powershell -ExecutionPolicy Bypass -File scripts\tests\test-lan-setup.ps1
 
 # Full-stack E2E on THIS machine (real clipboard, real relay, real client):
 powershell -ExecutionPolicy Bypass -File tests\e2e\run-end-to-end.ps1
@@ -110,7 +153,9 @@ powershell -ExecutionPolicy Bypass -File tests\e2e\run-end-to-end.ps1
 
 The E2E script starts a relay with a generated token, starts the tray client, drives the real
 Windows clipboard, and checks: upload, remote apply, **loop prevention**, 100 KB / 1 MB /
-~2 MiB boundaries, Unicode round-trips. It restores any pre-existing `.env` / client config.
+~2 MiB boundaries, Unicode round-trips, plus the simulated iPhone/iPad Shortcut flows
+(simplified POST endpoint + `exclude_device_id` GET semantics). It restores any
+pre-existing `.env` / client config.
 
 ## 7. Debug workflow
 

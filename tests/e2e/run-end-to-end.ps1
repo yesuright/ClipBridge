@@ -1,10 +1,13 @@
-# ClipBridge full-stack end-to-end verification (Milestone 1).
+# ClipBridge full-stack end-to-end verification (Milestone 2).
 # Verifies:
 #   A. Windows clipboard -> relay
 #   B. relay (simulated iPhone) -> Windows clipboard
 #   C. loop prevention (no re-upload of applied remote text)
 #   D. long text round-trips (100 KB, 1 MB, ~2 MiB boundary)
 #   E. Unicode / emoji / CRLF / Markdown / JSON round-trips
+#   F. simulated iPhone/iPad Shortcut flows (Milestone 2):
+#      simplified POST /clips/shortcut, GET latest?exclude_device_id,
+#      requester exclusion, unicode + 200 KB via shortcut path, loop prevention
 #
 # Requires: .NET 8 SDK, Python 3 + services/relay/.venv (pip install -r requirements-dev.txt)
 # Run from the repo root:  powershell -ExecutionPolicy Bypass -File tests/e2e/run-end-to-end.ps1
@@ -86,7 +89,7 @@ function MakeClipBody([string]$content, [string]$deviceId, [string]$createdAt = 
 }
 
 # ------------------------------------------------------------------ preflight
-Write-Host "=== ClipBridge Milestone 1 E2E ===" -ForegroundColor Cyan
+Write-Host "=== ClipBridge Milestone 2 E2E ===" -ForegroundColor Cyan
 if (-not (Test-Path $ProjectDir)) { Write-Host "Project dir missing: $ProjectDir"; exit 1 }
 
 # Prefer the user-installed SDK (this machine: C:\Users\devuser\.dotnet), then PATH.
@@ -234,6 +237,76 @@ try {
         $latest.content -eq $mixed
     } 20 500
     Assert-True ($okM) 'E: CRLF/LF/tabs/Markdown/JSON/quotes/backslashes round-trip'
+
+    # ======================================= F. Simulated iPhone/iPad Shortcut flows (M2)
+    # The real iPhone can't be driven from the PC, so we simulate exactly what the
+    # Apple Shortcuts do over HTTP:
+    #   Send  = POST /api/v1/clips/shortcut {"device_id","content"}
+    #   Get   = GET  /api/v1/clips/latest?exclude_device_id=<self>
+    #         or GET  /api/v1/clips?limit=10&exclude_device_id=<self>
+
+    function Send-Shortcut($deviceId, $content) {
+        $headers = @{ Authorization = "Bearer $script:Token" }
+        return Invoke-RestMethod -Method POST -Uri "http://127.0.0.1:$RelayPort/api/v1/clips/shortcut" `
+            -Headers $headers -ContentType 'application/json; charset=utf-8' `
+            -Body (@{ device_id = $deviceId; content = $content } | ConvertTo-Json -Depth 5)
+    }
+
+    # F1: iPhone "Send to ClipBridge" (simplified endpoint) -> Windows clipboard
+    $f1Text = 'F1: Hello from simulated iPhone (shortcut send)'
+    $f1 = Send-Shortcut 'iphone' $f1Text
+    Assert-True ($f1.clip_id -and $f1.origin -eq 'shortcut') 'F1: shortcut send accepted (server-generated record)'
+    Assert-True ($f1.content_hash -eq (Sha256Hex $f1Text)) 'F1: server computed canonical hash'
+    $okF1 = Wait-Until { (Get-Clipboard) -eq $f1Text } 20 500
+    Assert-True ($okF1) 'F1: iphone shortcut send -> Windows clipboard'
+
+    # F2: requester exclusion — iphone-equivalent GET must NOT return its own record
+    $f2 = Invoke-Relay 'GET' '/api/v1/clips/latest?exclude_device_id=iphone'
+    Assert-True ($f2.device_id -ne 'iphone') "F2: latest?exclude_device_id=iphone excludes own records (got $($f2.device_id))"
+    $f2list = Invoke-Relay 'GET' '/api/v1/clips?limit=10&exclude_device_id=iphone'
+    Assert-True (($f2list.clips | Where-Object { $_.device_id -eq 'iphone' }).Count -eq 0) 'F2: recent?exclude_device_id=iphone excludes own records'
+
+    # F3: Windows copy -> iphone-equivalent GET sees it as newest "other device" clip
+    $f3Text = 'F3: Windows -> relay, expected by iPhone GET'
+    Set-Clipboard -Value $f3Text
+    $okF3up = Wait-Until {
+        $latest = Invoke-Relay 'GET' '/api/v1/clips/latest'
+        $latest.content_hash -eq (Sha256Hex $f3Text)
+    } 20 500
+    Assert-True ($okF3up) 'F3: Windows copy uploaded'
+    $f3get = Invoke-Relay 'GET' '/api/v1/clips/latest?exclude_device_id=iphone'
+    Assert-True ($f3get.device_id -eq 'windows-main' -and $f3get.content -eq $f3Text) 'F3: iphone-equivalent GET gets Windows copy (exclusion working)'
+
+    # F4: iPad send -> Windows, then iPad-equivalent GET skips iPad's own record
+    $f4Text = "F4: iPad says 你好 🐱`nsecond line"
+    $f4 = Send-Shortcut 'ipad' $f4Text
+    Assert-True ($f4.size_bytes -eq [System.Text.Encoding]::UTF8.GetByteCount($f4Text)) 'F4: ipad shortcut send accepted (unicode size)'
+    $okF4 = Wait-Until { (Get-Clipboard) -eq $f4Text } 20 500
+    Assert-True ($okF4) 'F4: ipad shortcut send -> Windows clipboard (unicode)'
+    $f4get = Invoke-Relay 'GET' '/api/v1/clips/latest?exclude_device_id=ipad'
+    Assert-True ($f4get.device_id -ne 'ipad') "F4: latest?exclude_device_id=ipad excludes own records (got $($f4get.device_id))"
+    $f4list = Invoke-Relay 'GET' '/api/v1/clips?limit=10&exclude_device_id=ipad'
+    Assert-True (($f4list.clips | Where-Object { $_.device_id -eq 'ipad' }).Count -eq 0) 'F4: recent?exclude_device_id=ipad excludes own records'
+
+    # F5: long text through the simplified shortcut endpoint (200 KB)
+    $f5Text = New-Filler (200KB)
+    $f5 = Send-Shortcut 'iphone' $f5Text
+    Assert-True ($f5.content_hash -eq (Sha256Hex $f5Text)) 'F5: 200 KB shortcut send hash round-trip'
+    $okF5 = Wait-Until {
+        $cb = Get-Clipboard
+        $cb -and $cb.Length -eq (200KB) -and (Sha256Hex $cb) -eq (Sha256Hex $f5Text)
+    } 30 1000
+    Assert-True ($okF5) 'F5: 200 KB shortcut send -> Windows clipboard'
+
+    # F6: no echo — after shortcut sends, Windows must NOT re-upload remote text
+    Start-Sleep -Seconds 5   # several poll cycles
+    $f6History = (Invoke-Relay 'GET' '/api/v1/clips?limit=50')
+    $f6echoes = @($f6History.clips | Where-Object { $_.device_id -eq 'windows-main' -and $_.content -eq $f1Text })
+    Assert-True ($f6echoes.Count -eq 0) 'F6: loop prevention holds after shortcut sends'
+
+    # F7: mark a "no other device content" case is a clean 404 for the requester
+    $f7 = Invoke-Relay 'GET' '/api/v1/clips/latest?exclude_device_id=iphone'
+    Assert-True ($f7.device_id -ne 'iphone') 'F7: simulated devices still get a non-self record'
 }
 finally {
     if ($clientProcess -and -not $clientProcess.HasExited) {

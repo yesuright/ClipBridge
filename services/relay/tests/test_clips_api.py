@@ -220,6 +220,14 @@ def test_origin_defaults_to_local(client):
     assert r.json()["origin"] == "local"
 
 
+def test_origin_defaults_to_local_when_key_omitted(client):
+    body = make_clip(content="no origin key at all")
+    del body["origin"]
+    r = client.post("/api/v1/clips", json=body, headers=auth_headers())
+    assert r.status_code == 201
+    assert r.json()["origin"] == "local"
+
+
 def test_origin_custom(client):
     body = make_clip(content="from a shortcut", origin="shortcut")
     r = client.post("/api/v1/clips", json=body, headers=auth_headers())
