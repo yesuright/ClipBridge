@@ -23,6 +23,18 @@ public sealed record ClientConfig
     /// <summary>How long to remember our own uploads when filtering poll results.</summary>
     public int UploadMemorySeconds { get; init; } = 900;
 
+    /// <summary>
+    /// Bounded upload retry policy: the SAME clip (same clip_id, idempotent at the relay)
+    /// is re-posted up to <see cref="UploadMaxAttempts"/> times on transient failures,
+    /// with <see cref="UploadRetryBaseMs"/> * (attempt-1) backoff. A permanent protocol
+    /// error (4xx) is never retried, and there is no queue: after the bound the event
+    /// is dropped (as before) but only after three genuine attempts instead of one.
+    /// </summary>
+    public int UploadMaxAttempts { get; init; } = 3;
+
+    /// <summary>Base backoff (ms) between upload attempts: attempt 2 = base, attempt 3 = 2*base.</summary>
+    public int UploadRetryBaseMs { get; init; } = 500;
+
     // ---------------------------------------------------------------- M3: relay management
 
     /// <summary>
@@ -90,6 +102,8 @@ public sealed record ClientConfig
             HttpTimeoutSeconds = ParseInt(env("CLIPBRIDGE_HTTP_TIMEOUT_SECONDS"), config.HttpTimeoutSeconds, 5, 300),
             SuppressWindowSeconds = ParseInt(env("CLIPBRIDGE_SUPPRESS_WINDOW_SECONDS"), config.SuppressWindowSeconds, 1, 3600),
             UploadMemorySeconds = ParseInt(env("CLIPBRIDGE_UPLOAD_MEMORY_SECONDS"), config.UploadMemorySeconds, 60, 86400),
+            UploadMaxAttempts = ParseInt(env("CLIPBRIDGE_UPLOAD_MAX_ATTEMPTS"), config.UploadMaxAttempts, 1, 5),
+            UploadRetryBaseMs = ParseInt(env("CLIPBRIDGE_UPLOAD_RETRY_BASE_MS"), config.UploadRetryBaseMs, 100, 5000),
             ManageRelay = ParseBool(env("CLIPBRIDGE_MANAGE_RELAY"), config.ManageRelay),
             LanHostname = NormalizeHostname(env("CLIPBRIDGE_LAN_HOSTNAME") ?? config.LanHostname),
             RelayPort = ParseInt(env("CLIPBRIDGE_RELAY_PORT"), config.RelayPort, 1, 65535),

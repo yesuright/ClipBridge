@@ -160,6 +160,10 @@ powershell -ExecutionPolicy Bypass -File scripts\tests\test-lan-setup.ps1
 # 全链路端到端（真实剪贴板 + 真实 relay + 真实客户端 + 模拟 iPhone Shortcut 流程）
 powershell -ExecutionPolicy Bypass -File tests\e2e\run-end-to-end.ps1
 
+# M4.1 cold-path 可靠性压测（fresh launch / idle / relay 恢复后的第一次复制 → 100% 成功）
+# 默认 50 cycles；-Scenario All|Fresh|Idle|RelayRestart；隔离实例 + 独立端口，不影响真实会话
+powershell -ExecutionPolicy Bypass -File tests\e2e\cold-path-reliability.ps1 -Cycles 50
+
 # daily artifact 集成冒烟（无控制台/单实例/relay 启动/崩溃恢复/干净退出/无孤儿）
 powershell -ExecutionPolicy Bypass -File scripts\verify-daily.ps1
 ```

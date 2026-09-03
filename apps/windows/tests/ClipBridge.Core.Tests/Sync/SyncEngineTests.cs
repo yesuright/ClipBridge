@@ -35,21 +35,60 @@ public sealed class FakeRelay : IRelayClient
 {
     public readonly List<ClipRecord> Uploaded = new();
     public List<ClipRecord> History = new();
-    public bool FailNextPost;
-    public HttpStatusCode FailWith = HttpStatusCode.InternalServerError;
+
+    /// <summary>Fail the next N POSTs with a transient HttpRequestException (retryable).</summary>
+    public int FailPostsRemaining;
+
+    /// <summary>Fail every POST with a transient HttpRequestException (permanent transport outage).</summary>
+    public bool FailAllPosts;
+
+    /// <summary>When true, every POST fails with a RelayApiException at this status (permanent protocol error).</summary>
+    public int? FailWithStatus;
+
+    /// <summary>When true, the first POST "committed" but the response was lost (retry must be idempotent).</summary>
+    public bool LostResponseAfterStore;
+
+    /// <summary>When true, POSTs after the first answer 409 duplicate_clip_id (as if attempt 1 committed).</summary>
+    public bool DuplicateOnSecondPost;
+
+    /// <summary>Optional artificial upload duration so overlapping events can be observed.</summary>
+    public TimeSpan? PostDelay;
+
     public int PostCount;
     public int RecentCount;
 
-    public Task<ClipRecord> PostClipAsync(ClipRecord clip, CancellationToken ct)
+    public async Task<ClipRecord> PostClipAsync(ClipRecord clip, CancellationToken ct)
     {
         PostCount++;
-        if (FailNextPost)
+        if (PostDelay is { } delay)
         {
-            FailNextPost = false;
-            throw new HttpRequestException("simulated network failure");
+            await Task.Delay(delay, ct);
+        }
+        if (FailPostsRemaining > 0)
+        {
+            FailPostsRemaining--;
+            throw new HttpRequestException("simulated transient network failure");
+        }
+        if (FailAllPosts)
+        {
+            throw new HttpRequestException("simulated permanent network failure");
+        }
+        if (DuplicateOnSecondPost && PostCount > 1)
+        {
+            throw new RelayApiException(409, "duplicate_clip_id",
+                $"{{\"error\":\"duplicate_clip_id\",\"clip_id\":\"{clip.ClipId}\"}}");
         }
         Uploaded.Add(clip);
-        return Task.FromResult(clip);
+        if (LostResponseAfterStore)
+        {
+            LostResponseAfterStore = false;
+            throw new HttpRequestException("response lost after server commit");
+        }
+        if (FailWithStatus is { } status)
+        {
+            throw new RelayApiException(status, "simulated_relay_error", "{\"error\":\"simulated_relay_error\"}");
+        }
+        return clip;
     }
 
     public Task<ClipRecord?> GetLatestAsync(CancellationToken ct)
@@ -181,13 +220,100 @@ public class SyncEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task TransientFirstPostFailure_IsRetriedWithSameClipId()
+    {
+        // A single transient failure (first request after idle / pooled connection dead)
+        // must NOT drop the user's copy: the SAME clip is retried and uploaded.
+        _relay.FailPostsRemaining = 1;
+        await _engine.OnClipboardChangedAsync("A");
+
+        Assert.Single(_relay.Uploaded);
+        Assert.Equal("A", _relay.Uploaded[0].Content);
+        Assert.Equal(2, _relay.PostCount);
+        Assert.Null(_engine.LastError);
+        Assert.Contains(_logger.Lines, l => l.Contains("upload_retry"));
+        Assert.Contains(_logger.Lines, l => l.Contains("clip_uploaded"));
+    }
+
+    [Fact]
+    public async Task PermanentPostFailure_IsBounded_ThenReportsError()
+    {
+        // Transport stays down: exactly UploadMaxAttempts genuine attempts, then the
+        // event is dropped (bounded — no queue, no tight loop, no crash).
+        _relay.FailAllPosts = true;
+        await _engine.OnClipboardChangedAsync("A");
+
+        Assert.Empty(_relay.Uploaded);
+        Assert.Equal(3, _relay.PostCount); // default UploadMaxAttempts = 3
+        Assert.NotNull(_engine.LastError);
+        Assert.Contains(_logger.Lines, l => l.Contains("clip_upload_failed"));
+
+        // the engine stays healthy for the next event once the relay is back
+        _relay.FailAllPosts = false;
+        await _engine.OnClipboardChangedAsync("B");
+        Assert.Single(_relay.Uploaded);
+        Assert.Equal("B", _relay.Uploaded[0].Content);
+    }
+
+    [Fact]
+    public async Task PermanentProtocolError_IsNotRetried()
+    {
+        // A 401/422/413-type protocol error is permanent: exactly one attempt.
+        _relay.FailWithStatus = 422;
+        await _engine.OnClipboardChangedAsync("A");
+        Assert.Equal(1, _relay.PostCount);
+        Assert.NotNull(_engine.LastError);
+    }
+
+    [Fact]
+    public async Task LostResponseThenRetry_Yields409_IsTreatedAsUploaded_NoDuplicate()
+    {
+        // The relay committed the clip but the response was lost: the retry hits the
+        // idempotency primary key (409 duplicate_clip_id) and is treated as uploaded —
+        // no duplicate history entry, no crash, loop prevention stays armed.
+        _relay.LostResponseAfterStore = true;
+        _relay.DuplicateOnSecondPost = true;
+        await _engine.OnClipboardChangedAsync("idempotent");
+
+        Assert.Single(_relay.Uploaded); // the server-side record exists exactly once
+        Assert.Equal(2, _relay.PostCount);
+        Assert.Contains(_logger.Lines, l => l.Contains("clip_upload_duplicate"));
+    }
+
+    [Fact]
+    public async Task DuplicateNotificationDuringInFlightUpload_IsNotPostedTwice()
+    {
+        // While the first event is uploading, the duplicate notification for the same
+        // copy must NOT post again after the lock (previously → two POSTs, relay 409).
+        _relay.PostDelay = TimeSpan.FromMilliseconds(120);
+        var first = _engine.OnClipboardChangedAsync("same content");
+        var second = _engine.OnClipboardChangedAsync("same content");
+        await Task.WhenAll(first, second);
+
+        Assert.Equal(1, _relay.PostCount);
+        Assert.Single(_relay.Uploaded);
+    }
+
+    [Fact]
+    public async Task CancellationDuringRetry_DoesNotHang()
+    {
+        // The retry backoff must be cancellation-aware: after the token fires the
+        // pending wait is aborted and the call returns without a second POST.
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        _relay.FailAllPosts = true;
+        await _engine.OnClipboardChangedAsync("A", cts.Token); // completes promptly
+        Assert.True(_relay.PostCount <= 1, $"attempts after cancellation: {_relay.PostCount}");
+    }
+
+    [Fact]
     public async Task NetworkFailure_DoesNotCrash_AndRecovers()
     {
-        _relay.FailNextPost = true;
+        _relay.FailPostsRemaining = 99;
         await _engine.OnClipboardChangedAsync("A");
         Assert.Empty(_relay.Uploaded);
         Assert.NotNull(_engine.LastError);
 
+        _relay.FailPostsRemaining = 0;
         await _engine.OnClipboardChangedAsync("B");
         Assert.Single(_relay.Uploaded);
         Assert.Equal("B", _relay.Uploaded[0].Content);
@@ -313,6 +439,43 @@ public class SyncEngineTests : IDisposable
         Assert.True(await _engine.CheckForRemoteAsync());
         Assert.False(await _engine.CheckForRemoteAsync()); // same clip, already applied
         Assert.Equal(1, _clipboard.SetCount);
+    }
+
+    [Fact]
+    public async Task SameRemoteClip_IsNeverReappliedAfterSuppressionWindow()
+    {
+        // Regression (M4.1): the same remote clip used to be re-applied every ~30 s
+        // (clip-id memory was TTL-bounded like the hash memory), clobbering the user's
+        // newest copy with stale iPhone content. The clip-id memory is session-long now.
+        var clock = new MutableClock();
+        using var engine2 = new SyncEngine(_clipboard, _relay, _config, _logger, clock.UtcNow);
+        var stale = RemoteClip("stale iphone text", "clip-stale-1");
+        _relay.History = new List<ClipRecord> { stale };
+        Assert.True(await engine2.CheckForRemoteAsync());
+        Assert.Equal(1, _clipboard.SetCount);
+
+        clock.Advance(TimeSpan.FromSeconds(35)); // outside the 30 s suppression window
+        _relay.History = new List<ClipRecord> { stale };
+        Assert.False(await engine2.CheckForRemoteAsync());
+        Assert.Equal(1, _clipboard.SetCount); // not re-applied
+    }
+
+    [Fact]
+    public async Task EqualTimestampNewRemoteClip_IsStillApplied()
+    {
+        // The received-at floor is deliberately "strictly older only": a DIFFERENT clip
+        // with the same server timestamp must still be applied (it is newer by rowid).
+        var clock = new MutableClock();
+        using var engine2 = new SyncEngine(_clipboard, _relay, _config, _logger, clock.UtcNow);
+        var first = RemoteClip("first", "clip-eq-1") with { ReceivedAt = "2025-06-01T12:00:00.000Z" };
+        _relay.History = new List<ClipRecord> { first };
+        Assert.True(await engine2.CheckForRemoteAsync());
+
+        clock.Advance(TimeSpan.FromSeconds(40));
+        var second = RemoteClip("second", "clip-eq-2") with { ReceivedAt = "2025-06-01T12:00:00.000Z" };
+        _relay.History = new List<ClipRecord> { second, first };
+        Assert.True(await engine2.CheckForRemoteAsync());
+        Assert.Equal("second", _clipboard.Text);
     }
 
     [Fact]

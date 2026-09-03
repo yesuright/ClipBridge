@@ -9,13 +9,18 @@ namespace ClipBridge.Core.Sync;
 /// </summary>
 public sealed class AppliedRemoteTracker
 {
-    private readonly RecentHashCache _recentHashes;   // suppress upload of applied content
-    private readonly RecentHashCache _recentClipIds;  // avoid re-applying the same clip
+    private readonly RecentHashCache _recentHashes;   // suppress upload of applied content (TTL)
+    private readonly RecentHashCache _recentClipIds;  // avoid re-applying the same clip (session)
 
     public AppliedRemoteTracker(TimeSpan window, Func<DateTime>? clock = null)
     {
         _recentHashes = new RecentHashCache(window, capacity: 512, clock: clock);
-        _recentClipIds = new RecentHashCache(window, capacity: 512, clock: clock);
+        // Clip ids are remembered for the WHOLE session (capacity-bounded), not for the
+        // suppression window: the same remote clip must never be re-applied after its
+        // suppression window expires (the old behaviour re-wrote the clipboard every ~30 s,
+        // clobbering the user's newest copy). The user's own deliberate re-copy of the same
+        // CONTENT is still allowed: that check is hash-based and stays TTL-bounded.
+        _recentClipIds = new RecentHashCache(ttl: null, capacity: 512, clock: clock);
     }
 
     /// <summary>Record a successful remote apply (must be called BEFORE SetText).</summary>

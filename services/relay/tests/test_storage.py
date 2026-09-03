@@ -47,6 +47,57 @@ def test_create_latest_recent_order(store_factory):
         store.close()
 
 
+# ------------------------------------------------------------------ M4.1 regressions
+
+
+def _record_at(content, clip_id, device_id, received_at):
+    return ClipRecord(
+        clip_id=clip_id,
+        device_id=device_id,
+        content_type="text/plain",
+        content=content,
+        content_hash=compute_content_hash(content),
+        created_at=received_at,
+        received_at=received_at,
+        origin="local",
+        size_bytes=len(content.encode("utf-8")),
+    )
+
+
+def test_same_timestamp_tie_orders_by_insertion_desc():
+    """Two clips with the SAME received_at (same millisecond): the later insert wins
+    (rowid DESC tiebreaker), for the global latest, the exclusion filter AND recent."""
+    store = SqliteClipStore(":memory:")
+    try:
+        ts = "2026-01-01T00:00:00.000Z"
+        older = _record_at("tie-older", "id-tie-older", "windows-main", ts)
+        newer = _record_at("tie-newer", "id-tie-newer", "iphone", ts)
+        store.create(older, dedup_window_seconds=1)
+        store.create(newer, dedup_window_seconds=1)
+
+        assert store.latest().clip_id == "id-tie-newer"            # rowid DESC
+        assert store.latest_excluding("iphone").clip_id == "id-tie-older"
+        assert store.latest_excluding("windows-main").clip_id == "id-tie-newer"
+        assert [r.clip_id for r in store.recent(10)] == ["id-tie-newer", "id-tie-older"]
+        assert [r.clip_id for r in store.recent_excluding(10, "iphone")] == ["id-tie-older"]
+    finally:
+        store.close()
+
+
+def test_memory_store_same_timestamp_tie_matches_sqlite():
+    """MemoryClipStore must keep the same tie semantics as SQLite (newest insert)."""
+    store = MemoryClipStore(history_limit=50)
+    try:
+        ts = "2026-01-01T00:00:00.000Z"
+        store.create(_record_at("tie-older", "id-a", "windows-main", ts), dedup_window_seconds=1)
+        store.create(_record_at("tie-newer", "id-b", "iphone", ts), dedup_window_seconds=1)
+        assert store.latest().clip_id == "id-b"
+        assert store.latest_excluding("iphone").clip_id == "id-a"
+        assert [r.clip_id for r in store.recent(10)] == ["id-b", "id-a"]
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize("store_factory", [MemoryClipStore, lambda: SqliteClipStore(":memory:")])
 def test_duplicate_clip_id_rejected(store_factory):
     store = store_factory()

@@ -162,8 +162,16 @@ public sealed class SyncEngine : IDisposable
             {
                 return;
             }
+            // Re-check the loop-prevention caches AFTER acquiring the lock: duplicate
+            // notifications for the same copy can arrive while the winning event is
+            // still uploading (previously these were posted again and relay-rejected
+            // with 409 duplicate_content_in_window — wasted round trips for the same event).
+            if (_applied.IsRecentlyApplied(hash) || _uploaded.IsRecentUpload(hash))
+            {
+                return;
+            }
             var clip = BuildLocalClip(text);
-            var created = await _relay.PostClipAsync(clip, ct).ConfigureAwait(false);
+            var created = await PostWithRetryAsync(clip, ct).ConfigureAwait(false);
             _uploaded.MarkUploaded(created.ClipId, created.ContentHash);
             UpdateHealth(healthy: true);
             LastError = null;
@@ -196,6 +204,54 @@ public sealed class SyncEngine : IDisposable
             _operationLock.Release();
         }
     }
+
+    /// <summary>
+    /// POST the clip with BOUNDED retries on transient failures only (network errors,
+    /// timeouts, 5xx). The same clip is reposted under the SAME clip_id every attempt:
+    /// the relay's primary key makes the retry idempotent — a lost response followed by
+    /// a retry returns 409 duplicate_clip_id, which the caller treats as uploaded, so no
+    /// duplicate history entry is ever created. Permanent protocol errors (4xx) are never
+    /// retried. Cancellation-aware; no queue — the event is dropped after the bound
+    /// (three genuine attempts instead of one).
+    /// </summary>
+    private async Task<ClipRecord> PostWithRetryAsync(ClipRecord clip, CancellationToken ct)
+    {
+        var attempts = Math.Max(1, _config.UploadMaxAttempts);
+        Exception? lastError = null;
+        for (var attempt = 1; attempt <= attempts; attempt++)
+        {
+            if (attempt > 1)
+            {
+                var delayMs = Math.Max(1, _config.UploadRetryBaseMs) * (attempt - 1);
+                _log.Warn(
+                    $"upload_retry attempt={attempt}/{attempts} clip_id={clip.ClipId} " +
+                    $"size={clip.SizeBytes} delay_ms={delayMs} error={SafeExceptionMessage(lastError!)}");
+                await Task.Delay(delayMs, ct).ConfigureAwait(false);
+            }
+            try
+            {
+                var created = await _relay.PostClipAsync(clip, ct).ConfigureAwait(false);
+                if (attempt > 1)
+                {
+                    _log.Info($"upload_retry_success attempt={attempt} clip_id={created.ClipId}");
+                }
+                return created;
+            }
+            catch (Exception ex) when (IsTransientUploadFailure(ex)
+                                       && !ct.IsCancellationRequested && !_cts.IsCancellationRequested)
+            {
+                lastError = ex;
+            }
+        }
+        throw lastError!;
+    }
+
+    /// <summary>Transient = worth retrying: transport failure, timeout, JSON decode, server 5xx.</summary>
+    private static bool IsTransientUploadFailure(Exception ex) => ex switch
+    {
+        RelayApiException api => api.StatusCode >= 500,
+        _ => ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException,
+    };
 
     private void UpdateHealth(bool healthy)
     {

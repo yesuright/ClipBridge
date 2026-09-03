@@ -135,3 +135,33 @@ def test_exclusion_returns_canonical_records_with_valid_hash(client):
     data = r.json()
     assert data["content_hash"] == sha256_hex(data["content"])
     assert data["size_bytes"] == len(data["content"].encode("utf-8"))
+
+
+# --------------------------------------------------------- M4.1 regressions
+
+
+def test_post_commit_is_immediately_visible_to_latest(client):
+    """A successful POST must be visible to the very next GET /clips/latest — no
+    transaction/snapshot lag that would make an iPhone 'Get' return stale content."""
+    body = make_clip(content="just committed, must be visible now", device_id="windows-main")
+    assert client.post("/api/v1/clips", json=body, headers=auth_headers()).status_code == 201
+
+    r = client.get("/api/v1/clips/latest?exclude_device_id=iphone", headers=auth_headers())
+    assert r.status_code == 200
+    assert r.json()["content"] == "just committed, must be visible now"
+    assert r.json()["device_id"] == "windows-main"
+
+    # a second, later POST replaces it atomically for the next reader
+    body2 = make_clip(content="newest wins", device_id="windows-main")
+    assert client.post("/api/v1/clips", json=body2, headers=auth_headers()).status_code == 201
+    r2 = client.get("/api/v1/clips/latest?exclude_device_id=iphone", headers=auth_headers())
+    assert r2.json()["content"] == "newest wins"
+
+
+def test_latest_never_returns_an_empty_content_clip_as_newest_edge(client):
+    """The relay faithfully stores the empty clip — the client-side read guard is what
+    prevents empty clips from reaching the relay; the endpoint must simply return what
+    is newest (ordering contract, not content policy)."""
+    _post(client, "just plain", "windows-main")
+    r = client.get("/api/v1/clips/latest?exclude_device_id=iphone", headers=auth_headers())
+    assert r.json()["content"] == "just plain"

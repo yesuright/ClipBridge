@@ -106,12 +106,23 @@ no .NET runtime install either. Runtime dependencies of the artifact: **none** (
 ```
 user copies text
   → WM_CLIPBOARDUPDATE (hidden window)
+  → read guard: an uncertain first read (delayed-rendering sources deliver the
+    notification before the payload is readable; the read can be "" or throw)
+    → ONE bounded deferred re-read (300 ms, STA) — the real text is uploaded when
+      it becomes readable; a still-empty read is never published
+      (log: clipboard_skipped reason=empty_read|unreadable) — an empty clip would
+      otherwise shadow the real content on GET /clips/latest for the iPhone
   → engine.OnClipboardChangedAsync(text)
   → non-text?  → ignore (never crash; images/files are out of scope)
   → > 2 MiB?   → log + skip (boundary is explicit, no truncation)
   → sha256(content) in AppliedRemoteTracker? → suppress (remote echo; loop prevention)
   → build ClipRecord (new clip_id GUID, device_id, created_at UTC, origin="local")
   → POST /api/v1/clips (Authorization: Bearer <token>)
+      · bounded retry on transient failures only (≤3 attempts, 500 ms/1000 ms backoff,
+        SAME clip_id — the relay's primary key makes the retry idempotent; a lost
+        response retried returns 409 duplicate_clip_id which is treated as uploaded)
+      · permanent protocol errors (4xx) are not retried; no queue — the event is
+        dropped after the bound (three genuine attempts instead of one)
   → relay validates (hash recompute, size, schema) → SQLite insert → 201
   → mark clip_id as "uploaded" (poll echo filter)
 ```
@@ -124,7 +135,9 @@ poll every PollIntervalMs (default 2 s; 0.5–60 s clamp)
   → pick the newest clip that is:
        • not from our own device         (skip own uploads / own echoes)
        • not an exact echo of this session's uploads (clip_id in UploadedEchoTracker)
-       • not already applied within the suppression window (clip_id in AppliedRemoteTracker)
+       • not already applied this session (clip_id in AppliedRemoteTracker — the
+         clip-id memory is session-long, so a remote clip is applied at most once
+         per run; the 30 s window applies only to the content-hash echo suppression)
        • not strictly older than the newest remote clip already applied this session
          (received_at floor — no cascading re-applies of stale history)
        • text/plain and hash/size pass integrity verification

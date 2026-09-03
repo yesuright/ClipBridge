@@ -39,9 +39,11 @@ public sealed class TrayContext : ApplicationContext
     private readonly ToolStripMenuItem _copyLanItem;
     private readonly ToolStripMenuItem _autostartItem;
     private readonly SafeClipboardCopy _safeCopy;
+    private readonly ClipboardReadGuard _clipboardGuard;
     private readonly Appearance _appearance;
     private readonly RelayClient _historyClient;
     private readonly Icon _appIcon;
+    private System.Windows.Forms.Timer? _deferredClipboardRead;
     private MainWindow? _window;
     private bool _exiting;
 
@@ -58,6 +60,15 @@ public sealed class TrayContext : ApplicationContext
         _clipboard = new WinFormsClipboardService(_hidden);
         _engine = new SyncEngine(_clipboard, new RelayClient(config), config, logger);
         _safeCopy = new SafeClipboardCopy(_engine, _clipboard);
+        // Uncertain clipboard reads (delayed-rendering sources) get ONE bounded deferred
+        // re-read before publishing: an unverified empty read must never become an empty
+        // clip that shadows the real content on the relay (see M4.1 reliability fix).
+        _clipboardGuard = new ClipboardReadGuard(
+            _clipboard,
+            text => _ = _safeCopy.OnClipboardChangedAsync(text),
+            reason => _log.Info(
+                $"clipboard_skipped reason={reason} sequence={NativeMethods.GetClipboardSequenceNumber()}"),
+            ScheduleDeferredClipboardRead);
         _engine.ClipApplied += clip => OnSyncEvent("apply", clip);
         _engine.ClipUploaded += clip => OnSyncEvent("upload", clip);
         _engine.SyncHealthChanged += healthy => _status.Patch(s => s.WithSync(
@@ -183,12 +194,25 @@ public sealed class TrayContext : ApplicationContext
                 MarshalToUi(() => Notify(
                     "Relay failed: " + (reason ?? "unknown") + ". Check the log folder.",
                     ToolTipIcon.Warning));
+                _status.Patch(s => s.WithSync(_engine.Paused ? SyncState.Paused : SyncState.Offline));
                 break;
             case RelayState.Running:
                 _log.Info($"relay_ready reason={reason ?? "ok"}");
+                // Readiness: "Sync: Active" must mean "the relay is up AND answering".
+                // Trigger one immediate health probe instead of waiting up to a poll
+                // period; the engine flips Active only when this request succeeds.
+                _ = _engine.CheckNowAsync();
                 break;
+            case RelayState.Starting:
             case RelayState.Restarting:
-                MarshalToUi(() => Notify("Relay restarted unexpectedly — recovering\u2026", ToolTipIcon.Warning));
+            case RelayState.Stopped:
+                // A managed relay that is not Running cannot serve uploads/polls.
+                // Never leave the UI on a stale "Active" during these transitions.
+                _status.Patch(s => s.WithSync(_engine.Paused ? SyncState.Paused : SyncState.Offline));
+                if (state == RelayState.Restarting)
+                {
+                    MarshalToUi(() => Notify("Relay restarted unexpectedly — recovering\u2026", ToolTipIcon.Warning));
+                }
                 break;
         }
     }
@@ -366,8 +390,31 @@ public sealed class TrayContext : ApplicationContext
     /// <summary>Called from the hidden window's WndProc (STA UI thread).</summary>
     public void OnClipboardUpdate()
     {
-        var text = _clipboard.TryGetText();
-        _ = _safeCopy.OnClipboardChangedAsync(text);
+        _log.Debug($"clipboard_event sequence={NativeMethods.GetClipboardSequenceNumber()}");
+        _clipboardGuard.OnClipboardEvent(DeferredClipboardReadGrace);
+    }
+
+    /// <summary>
+    /// One bounded deferred re-read for an uncertain (empty/busy) clipboard read.
+    /// The timer is STA (WinForms) because the deferred re-read touches the clipboard.
+    /// Multiple uncertain notifications coalesce into a single re-read.
+    /// </summary>
+    private readonly TimeSpan DeferredClipboardReadGrace = TimeSpan.FromMilliseconds(300);
+
+    private void ScheduleDeferredClipboardRead(Action callback, TimeSpan grace)
+    {
+        if (_deferredClipboardRead is null)
+        {
+            _deferredClipboardRead = new System.Windows.Forms.Timer();
+            _deferredClipboardRead.Tick += (_, _) =>
+            {
+                _deferredClipboardRead!.Stop();
+                callback(); // ClipboardReadGuard re-reads and delivers/skips (STA here)
+            };
+        }
+        _deferredClipboardRead.Interval = (int)Math.Max(50, grace.TotalMilliseconds);
+        _deferredClipboardRead.Stop();
+        _deferredClipboardRead.Start();
     }
 
     /// <summary>WM_POWERBROADCAST resume (sleep→wake): re-check the network and sync immediately.</summary>
@@ -454,6 +501,8 @@ public sealed class TrayContext : ApplicationContext
         // Ordered, graceful: sync engine first (stop polling/uploads), then relay
         // (admin shutdown → wait → job kills), then network/mdns, then UI.
         try { _engine.Dispose(); } catch { }
+        _deferredClipboardRead?.Dispose();
+        _deferredClipboardRead = null;
         try
         {
             // Graceful relay stop first (never leave a stale process).

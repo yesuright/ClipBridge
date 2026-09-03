@@ -69,14 +69,37 @@ public class AppliedRemoteTrackerTests
     }
 
     [Fact]
-    public void SuppressionExpiresAfterWindow()
+    public void HashSuppressionExpiresAfterWindow_ButClipIdIsSessionLong()
     {
+        // The user's deliberate re-copy of the same CONTENT is allowed after the window
+        // (hash check), but the SAME remote clip must never be re-applied this session
+        // (clip-id check) — the old TTL-bounded clip-id memory re-wrote the clipboard
+        // every ~30 s and clobbered the user's newest copy.
         var clock = new MutableClock();
         var tracker = new AppliedRemoteTracker(TimeSpan.FromSeconds(30), clock.UtcNow);
         tracker.MarkApplied("clip-1", "hash-1");
         clock.Advance(TimeSpan.FromSeconds(31));
-        Assert.False(tracker.IsRecentlyApplied("hash-1"));
-        Assert.False(tracker.WasApplied("clip-1"));
+        Assert.False(tracker.IsRecentlyApplied("hash-1"));   // re-copy allowed
+        Assert.True(tracker.WasApplied("clip-1"));           // same remote clip: still applied
+    }
+
+    [Fact]
+    public void WasApplied_StillTrueLongAfterWindow()
+    {
+        var clock = new MutableClock();
+        var tracker = new AppliedRemoteTracker(TimeSpan.FromSeconds(30), clock.UtcNow);
+        tracker.MarkApplied("clip-old", "hash-old");
+        clock.Advance(TimeSpan.FromHours(6));
+        Assert.True(tracker.WasApplied("clip-old")); // regression: stale re-apply every 30s
+    }
+
+    [Fact]
+    public void DistinctClipIds_AreIndependent()
+    {
+        var tracker = new AppliedRemoteTracker(TimeSpan.FromSeconds(30));
+        tracker.MarkApplied("clip-a", "hash-x");
+        Assert.False(tracker.WasApplied("clip-b"));
+        Assert.False(tracker.IsRecentlyApplied("hash-y"));
     }
 }
 
