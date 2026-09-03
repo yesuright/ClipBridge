@@ -1,4 +1,9 @@
-# ClipBridge Architecture (Milestone 3)
+# ClipBridge Architecture (Milestone 4)
+
+> M4 adds an isolated WinForms presentation layer: Home / History / Settings, appearance,
+> original icons and a polished tray. Core protocol, Python relay, process manager,
+> sync, authentication, storage, limits and mDNS implementation remain unchanged.
+> The supported iPhone address is the current physical LAN IP on port 8787.
 
 > Milestone 3 = Windows daily-use productization. The sync protocol, storage, loop-prevention
 > and Shortcuts integration from M1/M2 are **unchanged**; this document describes the
@@ -149,11 +154,16 @@ The Shortcuts contain NO dynamic fields except the three configured once at crea
 uses its own id (`iphone`/`ipad`/`tony-iphone`...), so `exclude_device_id` keeps each
 device from fetching its own clipboard back.
 
-### UI (Minimal, Milestone 1)
+### UI (Milestone 4)
 
-- Tray icon (system icon only — no custom art) with: pause/resume sync, check now, open log folder, exit.
-- No settings window: config is env vars + `%APPDATA%\ClipBridge\config.json`.
-- Everything visual beyond this is explicitly deferred (see README deferred section).
+- Custom WinForms controls within the existing STA process. `TrayContext` owns the view,
+  while the hidden clipboard window continues to own clipboard marshaling and events.
+- `AppStatusModel` drives Home/tray; a separate existing `RelayClient` reads History;
+  startup and lifecycle buttons delegate to existing host APIs.
+- `SafeClipboardCopy` reuses the engine's one-shot suppression with Windows clipboard
+  sequence metadata to handle duplicate notifications and paused copies safely.
+- Theme persists separately in `appearance.json`; credentials remain in existing config.
+- Close hides to tray; explicit Exit preserves existing cleanup order. See [UI.md](UI.md).
 
 ## 3. Windows clipboard integration
 
@@ -243,7 +253,11 @@ configurable via env/config. A relay restart is handled naturally (next poll suc
 
 ## 8. LAN hostname / mDNS (Milestone 3)
 
-**Chosen strategy: in-app mDNS responder for `clipbridge.local` (+ IP fallback).**
+**M3 experiment: in-app mDNS responder for `clipbridge.local`. M4 supported method: IP URL.**
+
+The user subsequently confirmed the IP-based workflow on the real iPhone and reported
+that `.local` failed there. The historical experiment below is retained for context;
+M4 makes no mDNS changes and does not advertise it as the preferred address.
 
 Investigation results:
 
@@ -252,7 +266,7 @@ Investigation results:
 | A. mDNS (`clipbridge.local`) — in-app responder | **Implemented, best-effort.** Cross-platform-free, zero installs (no Bonjour/Apple service), stops with the app. Coexists with other 5353 responders via SO_REUSEADDR (verified live next to Edge, which also binds 5353). Resolution depends on the network stack (see below) — status per run is surfaced in the status model; **IP URL is the supported primary**. |
 | B. `DESKTOP-XXXX` (SMB/LLMNR/NetBIOS hostname) | Rejected: iOS does not resolve Windows NetBIOS/LLMNR names; mDNS is what iOS's Bonjour stack queries. |
 | C. DHCP reservation | Documented manual fallback only (never touch the router). |
-| D. Shortcut IP-update UX | Implemented: tray shows/copies the current LAN URL and balloons on IP change. The `.local` name removes the need for this in most cases. |
+| D. Shortcut IP-update UX | Supported: Home and Settings show/copy the current LAN URL, with the existing IP-change notification. |
 
 Implementation notes (understand before relying on it):
 
@@ -292,8 +306,9 @@ the iPhone must confirm `http://clipbridge.local:8787/api/v1/health` opens in Sa
 
 ## 9. Resource envelope (targets)
 
-- Client: tray-only, no visible window; clipboard listener is event-driven (no polling);
-  idle CPU ≈ 0%; RAM low (one HTTP client + string buffers).
+- Client: tray plus an optional compact window; clipboard listener and UI are event-driven.
+  No animation loop or UI polling timer. History is bounded to the existing 50 entries
+  and released from the view when hidden. The original engine poll interval is unchanged.
 - Relay: single uvicorn process, single SQLite connection; no background workers.
 - LAN reads are stateless — the relay keeps no requester state, so iPhone/iPad can
   poll at their own pace without server-side memory growth.

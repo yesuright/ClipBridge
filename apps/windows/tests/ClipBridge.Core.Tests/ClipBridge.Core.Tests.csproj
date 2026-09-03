@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <LangVersion>latest</LangVersion>
+    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ClipBridge.Core\ClipBridge.Core.csproj" />
+    <ProjectReference Include="..\..\src\ClipBridge.Win\ClipBridge.Win.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,4 +1,4 @@
-# Build the daily-use ClipBridge artifact (Milestone 3).
+# Build the daily-use ClipBridge artifact (Milestone 4).
 #
 # Produces:  artifacts\ClipBridge\
 #   ClipBridge.exe            <- Windows tray client (self-contained .NET, no runtime needed)
@@ -24,6 +24,11 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $artifactDisk = Join-Path $root 'build\dist-daily'
 $artifact = Join-Path $root 'artifacts\ClipBridge'
+# Never clean a computed path unless it resolves inside the canonical workspace.
+if ([IO.Path]::GetFullPath($artifact) -ne [IO.Path]::GetFullPath((Join-Path $root 'artifacts\ClipBridge')) -or
+    -not [IO.Path]::GetFullPath($artifact).StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Artifact path is outside the ClipBridge workspace.'
+}
 
 Write-Host '=== build-daily: ClipBridge daily-use artifact ===' -ForegroundColor Cyan
 
@@ -73,7 +78,7 @@ if ($LASTEXITCODE -ne 0) { Write-Host 'relay packaging failed'; exit $LASTEXITCO
 # ------------------------------------------------------------------ 3) assemble artifact
 Write-Host ''
 Write-Host '[3/3] Assembling artifacts\ClipBridge\...' -ForegroundColor Cyan
-if (Test-Path $artifact) { Remove-Item $artifact -Recurse -Force }
+if (Test-Path $artifact) { Remove-Item -LiteralPath $artifact -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $artifact | Out-Null
 
 # client (published)
@@ -93,14 +98,17 @@ ClipBridge - daily use
 ======================
 
 Start:   double-click ClipBridge.exe (nothing else to run or install)
-Stop:    right-click the tray icon -> Exit
+Open:    click the tray icon (Home / History / Settings)
+Hide:    close the window; sync keeps running in the tray
+Stop:    right-click the tray icon -> Exit ClipBridge
 Logs:    %LOCALAPPDATA%\ClipBridge\logs\
 Data:    %LOCALAPPDATA%\ClipBridge\clipbridge.db
 Config:  %APPDATA%\ClipBridge\config.json   (set DeviceToken to your relay token)
-LAN URL: shown in the tray menu (right-click -> copy it), e.g. http://192.168.1.14:8787
-         or try the stable name http://clipbridge.local:8787
+LAN URL: Home -> iPhone connection -> Copy address
+         Use the current PC LAN IP, e.g. http://192.168.1.14:8787
+Theme:   Settings -> Appearance -> System / Light / Dark
 
-iPhone/iPad: see DAILY_USE.md next to this file. Never forward port 8787 on your router.
+iPhone: see DAILY_USE.md next to this file. Never forward port 8787 on your router.
 "@ | Set-Content -Path (Join-Path $artifact 'README.txt') -Encoding UTF8
 
 Write-Host ''

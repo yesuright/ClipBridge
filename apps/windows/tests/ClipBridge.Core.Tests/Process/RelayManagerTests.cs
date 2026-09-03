@@ -212,9 +212,18 @@ public class RelayManagerTests
         var factory = new FakeRelayProcessFactory(_ => new FakeRelayProcess { /* stays alive but unhealthy */ });
         var admin = new FakeRelayAdmin { Healthy = false };
         using var manager = CreateManager(factory, admin, healthTimeout: TimeSpan.FromMilliseconds(300));
+        // Failed is transient: killing the fake immediately fires Exited, and its
+        // 10 ms retry can outrun the 25 ms polling helper. Observe the actual first
+        // failure event so a later restart_limit cannot replace the assertion target.
+        var failure = new TaskCompletionSource<(string? Reason, FakeRelayProcess Process)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        manager.StateChanged += (state, reason) =>
+        {
+            if (state == RelayState.Failed) failure.TrySetResult((reason, factory.Last));
+        };
         manager.Start();
-        await WaitForAsync(() => manager.State == RelayState.Failed, 8000);
-        Assert.Equal("startup_timeout", manager.LastFailureReason);
-        Assert.True(factory.Last.Killed, "unhealthy relay must be killed, not left running");
+        var first = await failure.Task.WaitAsync(TimeSpan.FromSeconds(8));
+        Assert.Equal("startup_timeout", first.Reason);
+        await WaitForAsync(() => first.Process.Killed);
+        Assert.True(first.Process.Killed, "unhealthy relay must be killed, not left running");
     }
 }

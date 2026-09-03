@@ -1,24 +1,25 @@
 # ClipBridge
 
-个人使用的跨设备**纯文本剪贴板同步**工具：Windows 11 PC、iPhone、iPad 之间互相传递长文本
+个人使用的跨设备**纯文本剪贴板同步**工具：Windows 11 PC 与 iPhone 之间互相传递长文本
 （AI prompt / handoff / 日志 / 代码），不再依赖微信、QQ 等聊天软件。
 
-> **当前状态：Milestone 3 (Windows Daily-Use Productization)** — Windows 侧工程全部完成
-> （ENGINEERING: PASS）；iPhone 真机重测待用户执行（IPHONE REGRESSION TEST:
-> READY_FOR_DEVICE_RETEST）；稳定地址已实现 mDNS 并在 Windows 侧验证，iOS 侧待真机确认。
-> **无正式视觉 UI**（属于后续 Codex 里程碑）。
+> **Milestone 4 — Polished Windows UI**：Home / History / Settings 原生主窗口，
+> Light / Dark / System 主题、原创图标、托盘和安全复制。同步核心与 API 保持不变。
+> iPhone 使用当前 PC 的 LAN IP 地址；`.local` 实验未在真实 iPhone 上成功。
+> M4 iPhone 回归：**READY_FOR_USER_RETEST**。iPad 继续使用 Apple Universal Clipboard，
+> 不作为单独产品界面。设计及行为见 [docs/UI.md](docs/UI.md)。
 
 ---
 
-## 它能做什么（Milestone 3）
+## 它能做什么（Milestone 4）
 
 ```
 Windows 复制文本 ──► ClipBridge 客户端 ──► Relay ──► 存储 latest + history
-iPhone/iPad (Apple Shortcuts) ──► POST /clips/shortcut ──► Relay ──► Windows 轮询 ──► 写入剪贴板
+iPhone (Apple Shortcuts) ──► POST /clips/shortcut ──► Relay ──► Windows 轮询 ──► 写入剪贴板
 ```
 
 - 复制后自动同步出去；其他设备的文本几秒内写入 Windows 剪贴板（默认 2s 轮询）
-- **iPhone/iPad 双向同步**：同一可信 Wi-Fi 下，两个 Apple Shortcuts（Send / Get）
+- **iPhone 双向同步**：同一可信 Wi-Fi 下，两个 Apple Shortcuts（Send / Get）
   即可工作，不依赖任何第三方 App，无需每次输入 URL/token/device ID
 - **日常使用 = 双击 `artifacts\ClipBridge\ClipBridge.exe`**：
   - 无 PowerShell、无 Python、无 .NET 安装需求（self-contained + PyInstaller 打包）
@@ -26,30 +27,32 @@ iPhone/iPad (Apple Shortcuts) ──► POST /clips/shortcut ──► Relay ─
   - 单实例（重复双击只会激活已有实例）；退出不留孤儿进程（Job Object 保证）
   - 可选“开机自启”（HKCU Run，无需管理员，默认关闭）
   - 网络变化 / 睡醒自动恢复；LAN 地址变化时托盘气泡提示
-  - 内置 mDNS 应答器：`http://clipbridge.local:8787` 可作为稳定地址
+  - Home 显示并复制当前物理 LAN 地址；mDNS 保留为实验实现，不作为首选地址
+  - 原生 Home / History / Settings；关闭隐藏到托盘，Exit ClipBridge 退出
+  - System / Light / Dark 主题，历史按需阅读及安全复制，原创多尺寸图标
 - `GET /clips/latest?exclude_device_id=<自己>`：设备不会取回自己产生的记录
 - `POST /clips/shortcut`：Shortcut 只需发 `device_id` + `content`，relay 生成
   `clip_id` / `content_hash` / `created_at`（Apple Shortcuts 无法原生做 UUID/SHA-256）
 - 单条最大 **2 MiB** UTF-8 纯文本，不会截断
 - 最近 **50 条**历史记录（`GET /api/v1/clips?limit=N`）
-- 多设备（`windows-main` / `iphone` / `ipad` …），设备 ID 可配置
+- Windows 与 iPhone 的设备 ID 可配置
 - 剪贴板循环（loop）在架构层防住（详见下）
 - 中英文 / emoji / Markdown / JSON / CRLF / tabs 完整 round-trip
 
 ## 不支持（明确范围）
 
 图片、文件、HTML/富文本剪贴板、二进制、密码管理集成。Windows 检测到非文本剪贴板时安全忽略。
-公网部署 / HTTPS / Tailscale / E2E 加密 / pairing UI / 正式安装器 / 正式 UI **不在本里程碑**。
+公网部署 / HTTPS / Tailscale / E2E 加密 / pairing UI / 正式安装器 **不在本里程碑**。
 
 ## 目录结构
 
 ```text
 ClipBridge/
 ├─ apps/
-│  └─ windows/                 # C#/.NET 8 客户端（Core 库 + 最小 tray 宿主 + 生命周期管理）
+│  └─ windows/                 # C#/.NET 8 客户端（Core 库 + 原生主窗口 / tray 宿主 + 生命周期管理）
 ├─ services/
 │  └─ relay/                   # Python FastAPI + SQLite relay（可 PyInstaller 打包为单 exe）
-├─ shortcuts/                  # iPhone/iPad Shortcuts 接入指南（两个 Shortcut）
+├─ shortcuts/                  # iPhone Shortcuts 接入指南（两个 Shortcut）
 ├─ docs/                       # ARCHITECTURE / PROTOCOL / SECURITY / DEVELOPMENT / DEVICE_TEST
 │                              #   / DAILY_USE / LIFECYCLE
 ├─ scripts/
@@ -59,7 +62,7 @@ ClipBridge/
 │  ├─ lib/LanSetup.psm1        # 可测试的 LAN 地址选择逻辑
 │  └─ tests/test-lan-setup.ps1 # LAN 逻辑单测
 ├─ tests/
-│  └─ e2e/                     # 全链路端到端验证脚本（含模拟 iPhone/iPad Shortcut 流程）
+│  └─ e2e/                     # 全链路端到端验证脚本（含模拟 iPhone Shortcut 流程）
 ├─ artifacts/                  # （构建生成，gitignored）daily-use 产物
 ├─ NuGet.Config                # 仓库级 NuGet 镜像配置（不影响全局）
 └─ README.md
@@ -73,7 +76,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-daily.ps1
 ```
 
 之后用户只需要：**双击 `artifacts\ClipBridge\ClipBridge.exe`**。
-开机自启、暂停/恢复、复制 LAN URL、查看日志等都在托盘右键菜单里。
+主窗口提供 Home / History / Settings。开机自启、暂停/恢复、复制 iPhone 地址和日志也可通过托盘操作。
 详细普通用户指南：`docs/DAILY_USE.md`；进程/生命周期细节：`docs/LIFECYCLE.md`。
 
 ## 快速开始（本地开发）
@@ -102,10 +105,10 @@ dotnet run --project apps\windows\src\ClipBridge.Win
 
 开发运行时若旁边没有打包的 relay exe，客户端自动进入 “external relay” 模式
 （只同步，不管理 relay 进程）——开发体验与 M2 一致。启动后：系统托盘出现 ClipBridge 图标，
-复制任意文本即自动上传；菜单：暂停同步 / 立即检查 / 复制 LAN URL / 重启 Relay / 日志 /
+复制任意文本即自动上传；主窗口和托盘提供暂停同步 / 立即检查 / 复制 iPhone 地址 / 日志 /
 数据目录 / 开机自启 / 退出。
 
-### 3. LAN 模式（iPhone/iPad 接入）
+### 3. LAN 模式（iPhone 接入）
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\start-lan-dev.ps1
@@ -118,7 +121,7 @@ LAN URL 与安全提示。**它不会**：改防火墙 / 暴露公网 / 打印 t
 > 后 relay 才对外监听。LAN HTTP 只用于可信家庭/办公 Wi-Fi（token 明文传输，
 > 详见 `docs/SECURITY.md`），不要做路由器端口转发。
 
-拿到 LAN URL 后，按 `docs/DEVICE_TEST.md` 在 iPhone/iPad 上配置两个 Shortcut
+拿到 LAN URL 后，按 `docs/DEVICE_TEST.md` 在 iPhone 上配置两个 Shortcut
 （约 5–10 个动作，无需第三方 App），完成真机双向同步验证。
 
 ### 4. 模拟 iPhone 发送（curl / PowerShell）
@@ -147,14 +150,14 @@ cd services\relay
 .\.venv\Scripts\pip install -r requirements-dev.txt
 .\.venv\Scripts\python -m pytest
 
-# Windows Core 单元测试（129 个：M2 全量 + M3 生命周期/单实例/状态模型/LAN 选择/
+# Windows 单元测试（160 个：含 M4 界面/安全复制/主题，以及 M2/M3 生命周期/状态/LAN/
 #   mDNS 编解码/配置迁移/日志轮转/启动注册…）
 dotnet test apps\windows\ClipBridge.sln
 
 # LAN helper 逻辑测试（纯函数，无需 Pester）
 powershell -ExecutionPolicy Bypass -File scripts\tests\test-lan-setup.ps1
 
-# 全链路端到端（真实剪贴板 + 真实 relay + 真实客户端 + 模拟 iPhone/iPad Shortcut 流程）
+# 全链路端到端（真实剪贴板 + 真实 relay + 真实客户端 + 模拟 iPhone Shortcut 流程）
 powershell -ExecutionPolicy Bypass -File tests\e2e\run-end-to-end.ps1
 
 # daily artifact 集成冒烟（无控制台/单实例/relay 启动/崩溃恢复/干净退出/无孤儿）
@@ -183,20 +186,21 @@ ClipBridge 在 **4 层**防御：
 - 仅纯文本（`text/plain`）；非文本剪贴板被忽略
 - 本地 HTTP + token；**LAN 明文 HTTP 仅限可信私有网络**，生产需 HTTPS（见 `docs/SECURITY.md`）
 - 无离线队列；网络恢复后自动恢复同步
-- 无正式 UI / 自定义图标 / 安装器（后续里程碑）
+- 无安装器、自动更新、代码签名（后续里程碑）
 - token 为全设备共享（无 per-device 键）；E2E 加密为未来方向，本轮未实现
 - 剪贴板在 Windows 侧被其他程序短占时，客户端重试 5 次后跳过该次复制（不崩溃）
-- iPhone/iPad 真机验证待执行（`docs/DEVICE_TEST.md`）
+- M3 已由用户完成 iPhone 双向验证；M4 真机回归待用户执行（`docs/DEVICE_TEST.md`）
 
 ## 文档索引
 
 | 文档 | 内容 |
 | --- | --- |
+| `docs/UI.md` | M4 原生界面架构、状态绑定、主题、隐私、键盘与 DPI |
 | `docs/ARCHITECTURE.md` | 组件、数据流、接收策略、信任边界、LAN/Shortcut 设计 |
 | `docs/PROTOCOL.md` | 端点、schema、`/clips/shortcut`、`exclude_device_id`、鉴权、hash、dedup、错误码 |
 | `docs/SECURITY.md` | 威胁模型、token 处理、LAN 明文 HTTP 定位、HTTPS、已知限制 |
 | `docs/DEVELOPMENT.md` | 前置条件、命令、环境变量、LAN 脚本、NuGet 配置说明 |
-| `docs/DEVICE_TEST.md` | **iPhone/iPad 真机手测指南**（前置、URL、两个 Shortcut、双向测试、排障） |
+| `docs/DEVICE_TEST.md` | **iPhone 真机手测指南**（前置、URL、两个 Shortcut、双向测试、排障） |
 | `docs/DAILY_USE.md` | **普通用户日常指南**：启动 / 开机自启 / 暂停 / 退出 / 排障 / IP 变化 |
 | `docs/LIFECYCLE.md` | 进程模型、parent/child 生命周期、崩溃恢复、睡醒恢复、数据位置 |
 | `shortcuts/SEND_TO_CLIPBRIDGE.md` | iPhone Shortcuts：发送剪贴板到 Windows |

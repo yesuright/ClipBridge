@@ -9,11 +9,13 @@
     <LangVersion>latest</LangVersion>
     <RootNamespace>ClipBridge.Win</RootNamespace>
     <AssemblyName>ClipBridge</AssemblyName>
-    <Version>0.3.0</Version>
-    <!-- Minimal tray shell: no custom icon, no fancy UI in Milestone 1. -->
+    <Version>0.4.0</Version>
+    <ApplicationIcon>Assets\ClipBridge.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Assets\ClipBridge.ico" />
     <ProjectReference Include="..\ClipBridge.Core\ClipBridge.Core.csproj" />
   </ItemGroup>
 

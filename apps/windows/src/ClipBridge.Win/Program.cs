@@ -48,7 +48,9 @@ internal static class Program
         // ------------------------------------------------------------- CLI control commands
         // These are standalone (they talk to the registry / the running instance), so they
         // never need the single-instance lock.
-        if (args.Any(a => a.StartsWith("--", StringComparison.Ordinal) && a.Contains("autostart", StringComparison.OrdinalIgnoreCase)))
+        if (args.Any(a => a.Equals("--autostart-status", StringComparison.OrdinalIgnoreCase)
+            || a.Equals("--enable-autostart", StringComparison.OrdinalIgnoreCase)
+            || a.Equals("--disable-autostart", StringComparison.OrdinalIgnoreCase)))
         {
             RunAutostartCommand(args);
             return;

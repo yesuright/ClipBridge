@@ -8,15 +8,17 @@ using ClipBridge.Core.Process;
 using ClipBridge.Core.Startup;
 using ClipBridge.Core.Status;
 using ClipBridge.Core.Sync;
+using ClipBridge.Win.UI;
+using Appearance = ClipBridge.Win.UI.Appearance;
 
 namespace ClipBridge.Win;
 
 /// <summary>
-/// Functional tray shell (Milestone 3 — product lifecycle, deliberately minimal visuals):
+/// Tray lifecycle host with an isolated native presentation layer:
 /// hidden window + clipboard listener + polling sync engine + managed relay child +
 /// network monitoring + mDNS hostname advertisement + startup registration + status model.
 /// Every status the user sees flows through <see cref="AppStatusModel"/>; UI never parses logs.
-/// Visual design (icons, layout, colors) is explicitly deferred to a later milestone.
+/// The main window is an owned view, not the application lifetime owner.
 /// </summary>
 public sealed class TrayContext : ApplicationContext
 {
@@ -33,13 +35,14 @@ public sealed class TrayContext : ApplicationContext
     private readonly WindowsStartupRegistration _startup;
     private readonly NotifyIcon _trayIcon;
     private readonly ToolStripMenuItem _appStatusItem;
-    private readonly ToolStripMenuItem _relayStatusItem;
-    private readonly ToolStripMenuItem _lanStatusItem;
-    private readonly ToolStripMenuItem _lastSyncItem;
     private readonly ToolStripMenuItem _toggleItem;
     private readonly ToolStripMenuItem _copyLanItem;
     private readonly ToolStripMenuItem _autostartItem;
-    private readonly ToolStripMenuItem _restartRelayItem;
+    private readonly SafeClipboardCopy _safeCopy;
+    private readonly Appearance _appearance;
+    private readonly RelayClient _historyClient;
+    private readonly Icon _appIcon;
+    private MainWindow? _window;
     private bool _exiting;
 
     public TrayContext(ClientConfig config, IClientLogger logger, AppStatusModel status, SingleInstanceGuard guard)
@@ -54,6 +57,7 @@ public sealed class TrayContext : ApplicationContext
         _ = _hidden.Handle; // force handle creation so AddClipboardFormatListener registers
         _clipboard = new WinFormsClipboardService(_hidden);
         _engine = new SyncEngine(_clipboard, new RelayClient(config), config, logger);
+        _safeCopy = new SafeClipboardCopy(_engine, _clipboard);
         _engine.ClipApplied += clip => OnSyncEvent("apply", clip);
         _engine.ClipUploaded += clip => OnSyncEvent("upload", clip);
         _engine.SyncHealthChanged += healthy => _status.Patch(s => s.WithSync(
@@ -102,52 +106,50 @@ public sealed class TrayContext : ApplicationContext
         }
 
         // ------------------------------------------------------------- tray menu
-        _appStatusItem = new ToolStripMenuItem("ClipBridge — starting\u2026");
-        _relayStatusItem = new ToolStripMenuItem("Relay: —");
-        _lanStatusItem = new ToolStripMenuItem("LAN: —");
-        _lastSyncItem = new ToolStripMenuItem("Last sync: —");
+        _appearance = new Appearance();
+        _historyClient = new RelayClient(config);
+        using (var stream = typeof(TrayContext).Assembly.GetManifestResourceStream("ClipBridge.Win.Assets.ClipBridge.ico")!)
+            _appIcon = new Icon(stream, new Size(32, 32));
+        _appStatusItem = new ToolStripMenuItem("Starting…") { Enabled = false };
         _toggleItem = new ToolStripMenuItem("Pause Sync", null, (_, _) => ToggleSync()) { Checked = false };
-        _copyLanItem = new ToolStripMenuItem("Copy LAN URL", null, (_, _) => CopyLanUrl());
-        _autostartItem = new ToolStripMenuItem("Start ClipBridge when I sign in", null, (_, _) => ToggleAutostart())
+        _copyLanItem = new ToolStripMenuItem("Copy iPhone Address", null, (_, _) => CopyLanUrl());
+        _autostartItem = new ToolStripMenuItem("Start with Windows", null, (_, _) => ToggleAutostart())
         {
             Checked = _startup.IsEnabled(),
-            ToolTipText = "Registers HKCU Run — user-level, no admin needed",
-        };
-        _restartRelayItem = new ToolStripMenuItem("Restart Relay", null, (_, _) => _relayManager?.Restart())
-        {
-            Enabled = false,
-            ToolTipText = "Restart the relay after a failure (port 8787 is never changed silently)",
+            ToolTipText = "Run quietly when you sign in",
         };
 
-        var menu = new ContextMenuStrip();
-        menu.Items.Add(_appStatusItem);
-        menu.Items.Add(_relayStatusItem);
-        menu.Items.Add(_lanStatusItem);
-        menu.Items.Add(_lastSyncItem);
+        var menu = new ContextMenuStrip { Font = new Font("Segoe UI", 10), ShowImageMargin = false, ShowCheckMargin = true };
+        menu.Items.Add(new ToolStripMenuItem("Open ClipBridge", null, (_, _) => OpenWindow()) { Font = new Font("Segoe UI Semibold", 10) });
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(_appStatusItem);
         menu.Items.Add(_toggleItem);
         menu.Items.Add(new ToolStripMenuItem("Check Now", null, (_, _) => CheckNow()));
-        menu.Items.Add(_copyLanItem);
-        menu.Items.Add(_restartRelayItem);
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(_copyLanItem);
         menu.Items.Add(new ToolStripMenuItem("Open Logs", null, (_, _) => OpenLogs()));
-        menu.Items.Add(new ToolStripMenuItem("Open Data Folder", null, (_, _) => OpenDataFolder()));
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_autostartItem);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(new ToolStripMenuItem("Exit", null, (_, _) => RequestExit()));
+        menu.Items.Add(new ToolStripMenuItem("Exit ClipBridge", null, (_, _) => RequestExit()));
+        foreach (ToolStripItem item in menu.Items) if (item is ToolStripMenuItem) item.Padding = new Padding(6, 5, 12, 5);
+        menu.Opening += (_, _) => RefreshStartup();
 
         _trayIcon = new NotifyIcon
         {
-            Icon = SystemIcons.Application, // system icon — custom art is Codex's future scope
+            Icon = new Icon(_appIcon, SystemInformation.SmallIconSize),
             Text = "ClipBridge",
             ContextMenuStrip = menu,
             Visible = config.ShowTrayIcon,
         };
+        _trayIcon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) OpenWindow(); };
+        _trayIcon.DoubleClick += (_, _) => OpenWindow();
+        _appearance.Changed += OnAppearanceChanged;
+        OnAppearanceChanged();
 
         // ------------------------------------------------------------- status wiring
         _status.Changed += OnStatusChanged;
-        guard.Activated += () => MarshalToUi(() =>
-            Notify("ClipBridge is already running.", ToolTipIcon.Info));
+        guard.Activated += () => MarshalToUi(OpenWindow);
         guard.ExitRequested += RequestExit;
         guard.CommandHandler = _ => JsonSerializer.Serialize(_status.Snapshot, StatusJson.Options);
         SeedNetworkStatus();
@@ -164,6 +166,8 @@ public sealed class TrayContext : ApplicationContext
             .WithStartupEnabled(_startup.IsEnabled()));
         _log.Info($"started device={config.DeviceId} relay={config.RelayUrl} manageRelay={_relayManager is not null}");
         Notify("ClipBridge is running. ", ToolTipIcon.Info);
+        if (!Environment.GetCommandLineArgs().Contains("--tray-autostart", StringComparer.OrdinalIgnoreCase))
+            MarshalToUi(OpenWindow);
     }
 
     // ---------------------------------------------------------------- events from hosts
@@ -293,17 +297,7 @@ public sealed class TrayContext : ApplicationContext
             Notify("No LAN address available right now.", ToolTipIcon.Warning);
             return;
         }
-        // The copy must not be uploaded back to the relay (one-shot suppression).
-        Interlocked.Increment(ref _engine.SuppressNextLocalEvents);
-        try
-        {
-            _clipboard.SetText(url);
-        }
-        catch
-        {
-            Notify("Could not write the clipboard.", ToolTipIcon.Warning);
-        }
-        Notify($"Copied {url}", ToolTipIcon.Info);
+        Notify(_safeCopy.TryCopy(url) ? "iPhone address copied." : "Clipboard is busy. Please try again.", ToolTipIcon.Info);
     }
 
     private void ToggleAutostart()
@@ -322,6 +316,25 @@ public sealed class TrayContext : ApplicationContext
         _status.Patch(s => s.WithStartupEnabled(_startup.IsEnabled()));
         _log.Info(wasEnabled ? "startup_disabled" : "startup_enabled");
     }
+
+    private void RefreshStartup() => _status.Patch(s => s.WithStartupEnabled(_startup.IsEnabled()));
+
+    private void OpenWindow()
+    {
+        if (_exiting) return;
+        _window ??= new MainWindow(_status.Snapshot, _appearance, _historyClient,
+            new UiActions(ToggleSync, () => _engine.CheckNowAsync(), _safeCopy.TryCopy, ToggleAutostart,
+                RefreshStartup, OpenLogs, OpenDataFolder, () => _relayManager?.Restart()), _config.DeviceId, _appIcon);
+        // The same application menu is also keyboard-accessible from the window
+        // (Shift+F10), even when Windows puts the notification icon in its overflow.
+        _window.ContextMenuStrip = _trayIcon.ContextMenuStrip;
+        _window.OpenAndFocus();
+    }
+
+    private void OnAppearanceChanged() => MarshalToUi(() =>
+    {
+        if (!_exiting) _trayIcon.ContextMenuStrip!.Renderer = new TrayRenderer(_appearance.Colors);
+    });
 
     private static void OpenLogs()
     {
@@ -354,7 +367,7 @@ public sealed class TrayContext : ApplicationContext
     public void OnClipboardUpdate()
     {
         var text = _clipboard.TryGetText();
-        _ = _engine.OnClipboardChangedAsync(text);
+        _ = _safeCopy.OnClipboardChangedAsync(text);
     }
 
     /// <summary>WM_POWERBROADCAST resume (sleep→wake): re-check the network and sync immediately.</summary>
@@ -384,42 +397,17 @@ public sealed class TrayContext : ApplicationContext
     private void RefreshMenuItem()
     {
         var s = _status.Snapshot;
-        var syncLabel = s.Sync switch
-        {
-            SyncState.Paused => "Paused",
-            SyncState.Offline => "Offline",
-            _ => "Active",
-        };
-        var relayLabel = s.Relay switch
-        {
-            RelayState.Disabled => "External (dev mode)",
-            RelayState.Starting => "Starting\u2026",
-            RelayState.Restarting => "Recovering\u2026",
-            RelayState.Failed => "Failed",
-            RelayState.Running => "Running",
-            _ => "Stopped",
-        };
-        var netLabel = s.Network switch
-        {
-            NetworkState.LanAvailable => s.LanUrl ?? "LAN available",
-            NetworkState.NoLan => "No LAN",
-            NetworkState.IpChanged => "IP changed (check Shortcut)",
-            _ => "Unknown",
-        };
-        var last = s.LastSyncAtUtc is null
-            ? "Last sync: —"
-            : $"Last sync: {s.LastSyncAtUtc:HH:mm:ss} from {s.LastSyncDeviceId} ({s.LastSyncBytes} bytes)";
-
         MarshalToUi(() =>
         {
-            _appStatusItem.Text = $"ClipBridge — Sync: {syncLabel}";
-            _relayStatusItem.Text = $"Relay: {relayLabel}";
-            _lanStatusItem.Text = $"LAN: {netLabel}";
-            _lastSyncItem.Text = last;
+            if (_exiting) return;
+            var presentation = StatusPresentation.From(s);
+            _appStatusItem.Text = presentation.Connected ? "Sync: Active" : presentation.Title;
+            _trayIcon.Text = "ClipBridge · " + presentation.Title;
             _toggleItem.Text = s.Sync == SyncState.Paused ? "Resume Sync" : "Pause Sync";
             _toggleItem.Checked = s.Sync == SyncState.Paused;
             _copyLanItem.Enabled = s.LanUrl is not null;
-            _restartRelayItem.Enabled = s.Relay == RelayState.Failed;
+            _autostartItem.Checked = s.StartupEnabled;
+            _window?.Present(s);
         });
     }
 
@@ -489,9 +477,16 @@ public sealed class TrayContext : ApplicationContext
         try { _network.Dispose(); } catch { }
         try { _relayAdmin.Dispose(); } catch { }
         _status.Changed -= OnStatusChanged;
+        _appearance.Changed -= OnAppearanceChanged;
+        _window?.Dispose();
+        _historyClient.Dispose();
+        _appearance.Dispose();
 
         _trayIcon.Visible = false;
+        _trayIcon.ContextMenuStrip?.Dispose();
+        _trayIcon.Icon?.Dispose();
         _trayIcon.Dispose();
+        _appIcon.Dispose();
         _hidden.Dispose();
 
         _log.Info("stopped");

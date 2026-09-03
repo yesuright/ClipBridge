@@ -1,4 +1,4 @@
-# Daily-use artifact integration smoke test (Milestone 3).
+# Daily-use artifact integration smoke test (Milestone 4).
 # Launches artifacts\ClipBridge\ClipBridge.exe and verifies the whole product lifecycle:
 #   - no-console build (PE subsystem = GUI)
 #   - relay auto-starts as a child and listens on 0.0.0.0:VERIFY_PORT
@@ -153,6 +153,19 @@ $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
 $subsystem = [BitConverter]::ToUInt16($bytes, $peOffset + 24 + 68)
 Assert-True ($subsystem -eq 2) 'A: exe is a GUI subsystem binary (no console window)' "subsystem=$subsystem"
 Assert-True ($subsystem -ne 3) 'A: not a console binary' "subsystem=$subsystem"
+Assert-True ([Reflection.AssemblyName]::GetAssemblyName((Join-Path $Artifact 'ClipBridge.dll')).Version.Major -eq 0 -and
+    [Reflection.AssemblyName]::GetAssemblyName((Join-Path $Artifact 'ClipBridge.dll')).Version.Minor -ge 4) 'A: M4 Windows UI assembly packaged'
+
+# Sign-in uses a launch argument, not a standalone registry command. Exercise it with
+# this harness's existing isolated instance id; do not modify the user's Run entry.
+$signIn = Start-Process -FilePath $exe -ArgumentList '--tray-autostart' -PassThru -WindowStyle Hidden
+$signInReady = Wait-Until { Get-Health $VerifyPort } 40 500
+$signIn.Refresh()
+Assert-True ($signInReady -and -not $signIn.HasExited) 'A: sign-in launch starts the daily app'
+Assert-True ($signIn.MainWindowHandle -eq 0) 'A: sign-in launch stays in the tray'
+Invoke-ClipBridgeCommand '--exit' | Out-Null
+$signInGone = Wait-Until { -not (Get-Process -Id $signIn.Id -ErrorAction SilentlyContinue) } 20 500
+Assert-True ($signInGone) 'A: sign-in instance exits cleanly'
 
 # ---------------------------------------------------------------- B. launch artifact
 Write-Host ''
@@ -162,6 +175,8 @@ $client = Start-Process -FilePath $exe -PassThru
 $healthOk = Wait-Until { Get-Health $VerifyPort } 40 500
 Assert-True ($healthOk) 'B: relay health after launch'
 Assert-True (-not $client.HasExited) 'B: client process alive after launch'
+$windowShown = Wait-Until { $client.Refresh(); $client.MainWindowHandle -ne 0 } 10 100
+Assert-True ($windowShown) 'B: normal launch opens the native main window'
 
 $listener = Get-NetTCPConnection -LocalPort $VerifyPort -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 Assert-True ($null -ne $listener) 'B: relay listening on the verify port'

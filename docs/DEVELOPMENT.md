@@ -67,8 +67,9 @@ Requires a token: set `CLIPBRIDGE_DEVICE_TOKEN` (env) or create `%APPDATA%\ClipB
 }
 ```
 
-The app runs in the system tray (system icon). Right-click → pause / check now / open log /
-exit. Logs: `%APPDATA%\ClipBridge\client.log`.
+The app opens a native Home / History / Settings window and remains in the tray with an
+original icon. Close hides; explicit Exit ClipBridge shuts down. Logs are in
+`%LOCALAPPDATA%\ClipBridge\logs`. UI architecture and review limits: [UI.md](UI.md).
 
 ## 5. Environment variables
 
@@ -103,7 +104,7 @@ exit. Logs: `%APPDATA%\ClipBridge\client.log`.
 | `CLIPBRIDGE_RELAY_PORT` | `8787` | port the managed relay binds (must match RelayUrl) |
 | `CLIPBRIDGE_SHOW_TRAY_ICON` | `true` | — |
 
-### Daily-use build (Milestone 3)
+### Daily-use build (Milestone 4)
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build-daily.ps1
@@ -111,9 +112,21 @@ powershell -ExecutionPolicy Bypass -File scripts\build-daily.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify-daily.ps1   # integration smoke
 ```
 
-Client CLI (scriptable / future UI): `--status` (JSON status line from the running instance),
+Client CLI (scriptable): `--status` (JSON status line from the running instance),
 `--exit` (graceful quit), `--enable-autostart` / `--disable-autostart` / `--autostart-status`,
 `--tray-autostart` (used by the Startup registration).
+
+UI source is in `apps/windows/src/ClipBridge.Win/UI`; its tests run in the existing
+solution. The native reader wraps long lines; Copy text preserves the original record.
+Theme preferences use `%APPDATA%\ClipBridge\appearance.json`, separately from secrets.
+Regenerate original icon assets with `powershell -ExecutionPolicy Bypass -File scripts/build-icon.ps1`.
+The ICO is embedded and used by the executable; the SVG is editable design source.
+Review screenshots belong in ignored `artifacts/ui-review/`, never production dependencies.
+
+For visual verification, run the actual daily artifact, review both themes and all three
+pages, verify close/reopen and second-launch focus, and use synthetic content for saved
+screenshots. The automated DPI checks measure actual fonts at 96/120/144/192 DPI and
+check minimum-size containment; physical mixed-monitor behavior still needs manual review.
 
 ## 5b. LAN mode for iPhone/iPad (Milestone 2)
 
