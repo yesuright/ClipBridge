@@ -189,6 +189,14 @@ Assert-True ($relayPid -gt 0) 'B: packaged relay child process running' "pid=$re
 $statusText = Invoke-ClipBridgeCommand '--status'
 $statusJson = $statusText | ConvertFrom-Json
 Assert-True ($statusJson.Relay -eq 'Running') 'B: status relay=Running'
+# Readiness must be published even when the relay came up before the first poll failed:
+# the engine's health event only fires on a transition, so a naive implementation left the
+# UI on "Offline" while sync actually worked (found by tests\e2e\relay-lifecycle-stress.ps1).
+$syncActive = Wait-Until {
+    $s = Invoke-ClipBridgeCommand '--status'
+    $s -and (($s | ConvertFrom-Json).Sync -eq 'Active')
+} 20 500
+Assert-True ($syncActive) 'B: status sync=Active (relay up AND answering)'
 Assert-True ($statusJson.App -eq 'Running') 'B: status app=Running'
 Assert-True ($statusJson.LanUrl -match '^http://') "B: status has a LAN URL ($($statusJson.LanUrl))"
 Assert-True ($statusJson.Mdns -in @('Advertising','Off','Conflict','Error')) 'B: mDNS state is tracked'

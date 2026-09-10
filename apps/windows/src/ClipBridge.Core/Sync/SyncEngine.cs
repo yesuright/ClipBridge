@@ -33,8 +33,21 @@ public sealed class SyncEngine : IDisposable
     private readonly UploadedEchoTracker _uploaded;
     private readonly SemaphoreSlim _operationLock = new(1, 1);
     private readonly CancellationTokenSource _cts = new();
+    private readonly Func<DateTime> _clock;
     private Task? _pollTask;
     private bool _disposed;
+
+    /// <summary>
+    /// Identical consecutive poll failures are logged once when they appear and then at
+    /// most once per this interval (with a repeat count) — an offline relay used to write
+    /// one identical `poll_failed` line every poll period forever, which buried the real
+    /// lifecycle lines. Recovery is always logged.
+    /// </summary>
+    private static readonly TimeSpan PollFailureRepeatInterval = TimeSpan.FromMinutes(1);
+
+    private string? _loggedPollError;
+    private DateTime _lastPollErrorLoggedAtUtc = DateTime.MinValue;
+    private long _pollFailureCount;
 
     /// <summary>
     /// Server timestamp of the newest remote clip applied in this session.
@@ -75,6 +88,7 @@ public sealed class SyncEngine : IDisposable
         _relay = relay;
         _config = config;
         _log = log ?? NullClientLogger.Instance;
+        _clock = clock ?? (() => DateTime.UtcNow);
         _applied = new AppliedRemoteTracker(
             TimeSpan.FromSeconds(config.SuppressWindowSeconds), clock);
         _uploaded = new UploadedEchoTracker(
@@ -316,8 +330,13 @@ public sealed class SyncEngine : IDisposable
                 {
                     continue;
                 }
-                return await ApplyRemoteAsync(clip, ct).ConfigureAwait(false);
+                // The relay answered, so the transport is healthy again regardless of
+                // whether the clipboard write itself succeeded.
+                var applied = await ApplyRemoteAsync(clip, ct).ConfigureAwait(false);
+                NotePollRecovered();
+                return applied;
             }
+            NotePollRecovered();
             UpdateHealth(healthy: true);
             return false;
         }
@@ -330,9 +349,40 @@ public sealed class SyncEngine : IDisposable
         {
             UpdateHealth(healthy: false);
             LastError = SafeExceptionMessage(ex);
-            _log.Warn($"poll_failed error={LastError}");
+            LogPollFailure(LastError);
             return false;
         }
+    }
+
+    /// <summary>First occurrence of an error is a WARN; identical repeats are rate-limited.</summary>
+    private void LogPollFailure(string message)
+    {
+        var now = _clock();
+        if (!string.Equals(message, _loggedPollError, StringComparison.Ordinal))
+        {
+            _loggedPollError = message;
+            _pollFailureCount = 1;
+            _lastPollErrorLoggedAtUtc = now;
+            _log.Warn($"poll_failed error={message}");
+            return;
+        }
+        _pollFailureCount++;
+        if (now - _lastPollErrorLoggedAtUtc >= PollFailureRepeatInterval)
+        {
+            _lastPollErrorLoggedAtUtc = now;
+            _log.Warn($"poll_failed error={message} repeats={_pollFailureCount} (still offline)");
+        }
+    }
+
+    private void NotePollRecovered()
+    {
+        if (_loggedPollError is null)
+        {
+            return;
+        }
+        _log.Info($"poll_recovered after_error={_loggedPollError} failed_polls={_pollFailureCount}");
+        _loggedPollError = null;
+        _pollFailureCount = 0;
     }
 
     /// <summary>Manual "check now" (tray action).</summary>

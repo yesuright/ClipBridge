@@ -187,13 +187,21 @@ public sealed class TrayContext : ApplicationContext
     {
         var keepLastError = _status.Snapshot.LastError;
         _status.Patch(s => s.WithRelay(state).WithLastError(
-            state == RelayState.Failed ? (reason ?? "relay failed") : keepLastError));
+            state == RelayState.Failed ? (reason ?? "relay failed")
+            : state == RelayState.Running ? null   // recovered: never keep a stale failure
+            : keepLastError));
         switch (state)
         {
             case RelayState.Failed:
-                MarshalToUi(() => Notify(
-                    "Relay failed: " + (reason ?? "unknown") + ". Check the log folder.",
-                    ToolTipIcon.Warning));
+                // Balloon once per failure episode. The manager now keeps retrying on its
+                // own with an escalating cool-down, so warning on every retry would nag the
+                // user forever; later rounds are still visible in the log and in the UI.
+                if (_relayManager is null || _relayManager.RecoveryRounds <= 1)
+                {
+                    MarshalToUi(() => Notify(
+                        "Relay failed: " + (reason ?? "unknown") + ". Retrying automatically — check the log folder if it stays offline.",
+                        ToolTipIcon.Warning));
+                }
                 _status.Patch(s => s.WithSync(_engine.Paused ? SyncState.Paused : SyncState.Offline));
                 break;
             case RelayState.Running:
@@ -201,7 +209,7 @@ public sealed class TrayContext : ApplicationContext
                 // Readiness: "Sync: Active" must mean "the relay is up AND answering".
                 // Trigger one immediate health probe instead of waiting up to a poll
                 // period; the engine flips Active only when this request succeeds.
-                _ = _engine.CheckNowAsync();
+                _ = ConfirmSyncReadyAsync();
                 break;
             case RelayState.Starting:
             case RelayState.Restarting:
@@ -217,6 +225,31 @@ public sealed class TrayContext : ApplicationContext
         }
     }
 
+    /// <summary>
+    /// Confirm that the relay really answers and publish the resulting sync state.
+    /// The engine only raises <c>SyncHealthChanged</c> on a null↔non-null LastError
+    /// transition, so a relay that comes up before the poll loop ever fails (or that
+    /// recovers faster than one poll period) left the UI stuck on the "Offline" that the
+    /// Starting/Restarting handlers publish — while sync was in fact working. Probing
+    /// here and publishing "Active" on success makes readiness independent of the
+    /// transition history.
+    /// </summary>
+    private async Task ConfirmSyncReadyAsync()
+    {
+        try
+        {
+            await _engine.CheckNowAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // the engine owns failure handling; lastError stays authoritative
+        }
+        if (!_engine.Paused && _engine.LastError is null)
+        {
+            _status.Patch(s => s.WithSync(SyncState.Active));
+        }
+    }
+
     private void OnNetworkChanged(NetworkChangedEventArgs e)
     {
         _status.Patch(s =>
@@ -224,7 +257,8 @@ public sealed class TrayContext : ApplicationContext
             s.WithNetwork(e.LanAvailable ? NetworkState.LanAvailable : NetworkState.NoLan);
             s.WithLanUrl(e.NewPrimaryUrl);
             // mDNS re-announces with the new IP automatically
-        });        if (e.OldPrimaryUrl is not null && e.NewPrimaryUrl is not null
+        });
+        if (e.OldPrimaryUrl is not null && e.NewPrimaryUrl is not null
             && !e.OldPrimaryUrl.Equals(e.NewPrimaryUrl, StringComparison.Ordinal))
         {
             _status.Patch(s => s.WithNetwork(NetworkState.IpChanged).WithLanIpChanged(true));
@@ -302,7 +336,13 @@ public sealed class TrayContext : ApplicationContext
     private void ToggleSync()
     {
         _engine.Paused = !_engine.Paused;
-        _status.Patch(s => s.WithSync(_engine.Paused ? SyncState.Paused : SyncState.Active));
+        // Resuming must not claim "Active" while the managed relay cannot serve requests:
+        // a paused→resumed app whose relay is Failed/Stopped is still Offline. Without this
+        // the resume path silently overwrote the Offline state M4.1 sets for a dead relay.
+        var relayDown = _relayManager is not null
+            && _status.Snapshot.Relay is RelayState.Failed or RelayState.Stopped;
+        _status.Patch(s => s.WithSync(
+            _engine.Paused ? SyncState.Paused : relayDown ? SyncState.Offline : SyncState.Active));
         _log.Info(_engine.Paused ? "sync_paused" : "sync_resumed");
         Notify(_engine.Paused ? "Sync paused" : "Sync resumed", ToolTipIcon.Info);
     }

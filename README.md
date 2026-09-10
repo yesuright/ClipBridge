@@ -166,6 +166,10 @@ powershell -ExecutionPolicy Bypass -File tests\e2e\cold-path-reliability.ps1 -Cy
 
 # daily artifact 集成冒烟（无控制台/单实例/relay 启动/崩溃恢复/干净退出/无孤儿）
 powershell -ExecutionPolicy Bypass -File scripts\verify-daily.ps1
+
+# Relay lifecycle 恢复压测（意外退出 → 自动恢复；restart budget 耗尽 → 自动自愈，无需用户重启）
+# 20 次 kill/recover + 4 次完整重启 + 2 轮「耗尽 budget → 自愈 → 稳定运行 → 再次崩溃仍能恢复」
+powershell -ExecutionPolicy Bypass -File tests\e2e\relay-lifecycle-stress.ps1
 ```
 
 ## 循环（clipboard loop）是怎么防住的

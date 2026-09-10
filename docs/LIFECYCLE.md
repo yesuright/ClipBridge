@@ -23,7 +23,8 @@ Windows login (Startup: HKCU Run, user-level, optional)
 | --- | --- |
 | **Job Object (kill-on-close)** | The OS ends the relay child automatically whenever the tray client exits — normal exit *or* crash. This is the no-orphan guarantee. |
 | Graceful shutdown channel | `POST /api/v1/admin/shutdown` (Bearer-token guarded) lets the relay drain and exit cleanly so SQLite closes properly on *normal* exit. |
-| Bounded restart policy | A relay crash triggers up to **3 restarts** with exponential backoff (1 s / 2 s / 4 s). Rapid crash loops stop at 4 attempts and the relay state becomes `Failed`; the tray shows the error and a manual **Restart Relay** action. A stable run of ≥ 60 s resets the budget. |
+| Bounded restart policy | A relay crash triggers up to **3 restarts** with exponential backoff (1 s / 2 s / 4 s). A stable run of ≥ 60 s resets the budget. Rapid crash loops stop at 4 attempts (`Failed(restart_limit)`, logged as `relay_restart_exhausted`). |
+| Exhaustion is never terminal | After the budget is exhausted the manager waits a cool-down and starts a **fresh budget** by itself: 30 s → 60 s → 120 s → 300 s, then capped at 300 s (`relay_recovery_attempt round=N`). A transient failure therefore heals with no user action, while a permanently broken relay retries at most once per 5 minutes — never a restart storm. Reaching `Running` clears the escalation. |
 | Port 8787 conflict | Detected before start (loopback TCP probe + health check). `Failed(port_in_use)` — never a silent port switch, because the iPhone Shortcut pins 8787. |
 | Single instance | Per-user named mutex + named pipe. Second launch signals the running instance (tray balloon) and exits. Never two relays, two listeners, two binds. |
 
@@ -59,8 +60,9 @@ set App=Stopping
 
 | Scenario | Behaviour |
 | --- | --- |
-| Relay child crashes | Client keeps running; restart with backoff (≤ 3 attempts); log lines `relay_exited` / `relay_restarting attempt=N`; state `Restarting` → `Running` or `Failed`. |
-| Relay in restart storm | 4th consecutive crash → `Failed(restart_limit)`, tray warning balloon, **Restart Relay** menu item enabled. |
+| Relay child crashes | Client keeps running; restart with backoff (≤ 3 attempts); log lines `relay_exited pid=… code=… uptime_ms=… exited_at=…` / `relay_restarting attempt=N`; state `Restarting` → `Running` or `Failed`. |
+| Relay in restart storm | 4th consecutive crash → `Failed(restart_limit)` + `relay_restart_exhausted attempts=… last_exit_code=… last_error=… next_retry_in_ms=…`, one tray warning balloon per failure episode, **Restart Relay** menu item enabled. The manager then retries on the escalating cool-down (`relay_recovery_attempt`) until the relay runs again, so the app can never stay `Offline` forever. |
+| Relay child alive but never healthy | `relay_failed reason=startup_timeout … listening=<bool> exited=<bool>` records whether the child ever bound the port. `exited=false` + `listening=false` after several rounds means something on the machine is intercepting loopback traffic to 8787 (local firewall/VPN/proxy), **not** that the relay failed to start. |
 | Client crashes (hard kill) | Job Object closes → OS kills the relay child. No orphan, port released. |
 | Port 8787 taken by another app | `Failed(port_in_use)` + log; user acts (close the other app), tray **Restart Relay** retries. |
 | Unknown remote relay on healthy port | Treated as external relay (Running) and logged — sync continues against it. |

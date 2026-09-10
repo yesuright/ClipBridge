@@ -245,18 +245,25 @@ if (-not (Test-Path $Artifact)) {
 $script:AppExe = $Artifact
 $script:Token = 'cb-stress-' + [guid]::NewGuid().ToString('N')
 
-# isolated client config (backup/restore) — keeps the user's real config untouched
+# Isolated client configuration — through ENVIRONMENT VARIABLES ONLY.
+# ClientConfig resolves env > file > defaults, so the app can be pointed at this run's
+# port/token without ever writing %APPDATA%\ClipBridge\config.json. An earlier revision
+# backed the file up in memory and restored it afterwards, which silently propagated a
+# test config into the user's real config whenever a run aborted before its restore step
+# (the restore then put back the very config the test had written one run earlier).
+# The hash guard at the end fails the run if the file changes at all.
 $cfgDir = Join-Path $env:APPDATA 'ClipBridge'
 $cfgPath = Join-Path $cfgDir 'config.json'
-$cfgBackup = $null
-if (Test-Path $cfgPath) { $cfgBackup = Get-Content $cfgPath -Raw }
-New-Item -ItemType Directory -Force -Path $cfgDir | Out-Null
+if (-not (Test-Path $cfgPath)) {
+    Write-Host "No %APPDATA%\ClipBridge\config.json — configure the device token first (docs\DAILY_USE.md)." -ForegroundColor Red
+    exit 1
+}
+$cfgHashBefore = (Get-FileHash $cfgPath -Algorithm SHA256).Hash
 $env:CLIPBRIDGE_INSTANCE_ID = $InstanceId
 $env:CLIPBRIDGE_RELAY_PORT = "$Port"
 $env:CLIPBRIDGE_RELAY_URL = "http://127.0.0.1:$Port"
-@{ RelayUrl = "http://127.0.0.1:$Port"; DeviceId = 'windows-main'; DeviceToken = $script:Token;
-   PollIntervalMs = 1000; RelayPort = $Port } |
-    ConvertTo-Json | ForEach-Object { [System.IO.File]::WriteAllText($cfgPath, $_, [System.Text.UTF8Encoding]::new($false)) }
+$env:CLIPBRIDGE_DEVICE_TOKEN = $script:Token
+$env:CLIPBRIDGE_POLL_INTERVAL_MS = '1000'
 
 # artifact managed relay pins LOCALAPPDATA db — back it up so the user's history is untouched
 $dataDir = Join-Path $env:LOCALAPPDATA 'ClipBridge'
@@ -314,15 +321,18 @@ foreach ($scn in $scenarios) {
 
 # ------------------------------------------------------------------ restore
 Stop-App
-if ($null -ne $cfgBackup) {
-    [System.IO.File]::WriteAllText($cfgPath, ($cfgBackup -join "`r`n"), [System.Text.UTF8Encoding]::new($false))
-} elseif (Test-Path $cfgPath) { Remove-Item $cfgPath -Force }
+$cfgHashAfter = (Get-FileHash $cfgPath -Algorithm SHA256).Hash
+if ($cfgHashAfter -ne $cfgHashBefore) {
+    Write-Host 'SAFETY: the user config.json changed during this run — investigate before trusting the result.' -ForegroundColor Red
+    $script:Failures.Add('SAFETY: user config.json was modified')
+}
 foreach ($f in $dbFiles) {
     $p = Join-Path $dataDir $f
     if ($dbBackups.ContainsKey($f)) {
         Copy-Item $dbBackups[$f] $p -Force
     } elseif (Test-Path $p) { Remove-Item $p -Force -ErrorAction SilentlyContinue }
 }
+Remove-Item Env:CLIPBRIDGE_INSTANCE_ID, Env:CLIPBRIDGE_RELAY_PORT, Env:CLIPBRIDGE_RELAY_URL, Env:CLIPBRIDGE_DEVICE_TOKEN, Env:CLIPBRIDGE_POLL_INTERVAL_MS -ErrorAction SilentlyContinue
 
 # ------------------------------------------------------------------ report
 $ok = @($script:CycleResults | Where-Object { $_ }).Count

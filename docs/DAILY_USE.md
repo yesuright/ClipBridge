@@ -60,7 +60,7 @@ Tab / Shift+Tab 切换控件，Space / Enter 激活按钮，Ctrl+1 / 2 / 3 切�
 | --- | --- |
 | Starting… | 等待中继完成启动 |
 | Relay restarting… | 等待原有自动恢复流程 |
-| Offline | 检查连接；若 Settings 出现 Restart relay，可重试；仍失败则 Open logs |
+| Offline | 中继会自动重试（含 restart budget 耗尽后的自动自愈），先等 1–5 分钟；若 Settings 出现 Restart relay 可手动立即重试；仍失败则 Open logs |
 | History unavailable | 点击 Retry |
 | Clipboard is busy | 稍后再次复制 |
 | Shortcut 报 401 | 检查已有 Shortcut 与 config.json 的 token 是否一致 |

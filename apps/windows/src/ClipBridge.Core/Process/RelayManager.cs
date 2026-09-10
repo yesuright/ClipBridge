@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using ClipBridge.Core.Logging;
 using ClipBridge.Core.Status;
+using ClipBridge.Core.Time;
 
 namespace ClipBridge.Core.Process;
 
@@ -30,9 +31,27 @@ public sealed class RelayManager : IDisposable
     private int _restartAttempts;
     private DateTime _firstFailureUtc = DateTime.MinValue;
     private DateTime _runningSinceUtc = DateTime.MinValue;
+    private int _recoveryRounds;
+    private int _recoverySeq;
+    private bool _recoveryPending;
+    private DateTime _startedAtUtc = DateTime.MinValue;
+    private DateTime _lastExitAtUtc = DateTime.MinValue;
+    private int? _lastExitCode;
 
     public const int DefaultMaxRestarts = 3;
     public static readonly TimeSpan[] DefaultBackoff = { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4) };
+
+    /// <summary>
+    /// Cool-down before a fresh restart budget after the bounded budget is exhausted
+    /// (escalating, final value is the permanent cap). The manager never gives up on a
+    /// managed relay: a transient failure self-heals without the user restarting the app,
+    /// while a permanently broken relay retries at most once per cap — never a storm.
+    /// </summary>
+    public static readonly TimeSpan[] DefaultRecoveryCooldown =
+    {
+        TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(60),
+        TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(300),
+    };
 
     /// <summary>True when the child was assigned to a kill-on-close job object.</summary>
     public bool IsChildInJob => _job is not null && _jobAssigned;
@@ -49,7 +68,8 @@ public sealed class RelayManager : IDisposable
         TimeSpan? healthTimeout = null,
         TimeSpan? healthPollInterval = null,
         TimeSpan? successStability = null,
-        Func<int, bool>? portProbe = null)
+        Func<int, bool>? portProbe = null,
+        TimeSpan[]? recoveryCooldown = null)
     {
         _spec = spec;
         _processFactory = processFactory;
@@ -61,12 +81,18 @@ public sealed class RelayManager : IDisposable
         _healthPollInterval = healthPollInterval ?? TimeSpan.FromMilliseconds(500);
         _successStability = successStability ?? TimeSpan.FromSeconds(60);
         _portProbe = portProbe ?? PortProbe.IsLoopbackPortOpen;
+        _recoveryCooldown = recoveryCooldown ?? DefaultRecoveryCooldown;
+        if (_recoveryCooldown.Length == 0)
+        {
+            _recoveryCooldown = DefaultRecoveryCooldown;
+        }
     }
 
     private readonly TimeSpan _healthTimeout;
     private readonly TimeSpan _healthPollInterval;
     private readonly TimeSpan _successStability;
     private readonly Func<int, bool> _portProbe;
+    private readonly TimeSpan[] _recoveryCooldown;
 
     /// <summary>
     /// A crash resets the restart budget when the relay had been Running stably for at
@@ -82,6 +108,25 @@ public sealed class RelayManager : IDisposable
     public string? LastFailureReason { get; private set; }
 
     public int? RelayPid => _process is { HasExited: false } ? _process.Id : null;
+
+    // ------------------------------------------------------- diagnostics (Layer 2)
+    // Precise, queryable lifecycle facts so the NEXT unexpected exit can be explained
+    // from the log alone (pid / start / exit / exit code / attempt / budget).
+
+    /// <summary>Restarts consumed inside the current failure window (0 = fresh budget).</summary>
+    public int RestartAttempts { get { lock (_lock) { return _restartAttempts; } } }
+
+    /// <summary>Failed cycles since the relay last ran: drives the recovery cool-down.</summary>
+    public int RecoveryRounds { get { lock (_lock) { return _recoveryRounds; } } }
+
+    /// <summary>UTC start time of the current (or most recent) relay child.</summary>
+    public DateTime? LastStartAtUtc { get { lock (_lock) { return _startedAtUtc == DateTime.MinValue ? null : _startedAtUtc; } } }
+
+    /// <summary>UTC time the most recent relay child was observed to exit.</summary>
+    public DateTime? LastExitAtUtc { get { lock (_lock) { return _lastExitAtUtc == DateTime.MinValue ? null : _lastExitAtUtc; } } }
+
+    /// <summary>Exit code of the most recent relay child (null = never observed).</summary>
+    public int? LastExitCode { get { lock (_lock) { return _lastExitCode; } } }
 
     private bool _enabled;
 
@@ -112,6 +157,9 @@ public sealed class RelayManager : IDisposable
         lock (_lock)
         {
             _restartAttempts = 0;
+            _recoveryRounds = 0;
+            _recoveryPending = false;
+            _recoverySeq++; // supersede any pending recovery supervisor
             _firstFailureUtc = DateTime.MinValue;
         }
         Stop(graceful: true);
@@ -215,8 +263,10 @@ public sealed class RelayManager : IDisposable
             lock (_lock)
             {
                 _process = process;
+                _startedAtUtc = DateTime.UtcNow;
             }
             process.Exited += OnProcessExited;
+            _log.Info($"relay_spawned pid={process.Id} attempt={_restartAttempts + 1} started_at={Timestamps.UtcNowIso()}");
 
             // Kill-on-close: parent death (crash or kill) takes the relay with it.
             try
@@ -235,7 +285,8 @@ public sealed class RelayManager : IDisposable
 
             // --- health verification: bounded wait (default 20 s), 500 ms steps
             var healthy = false;
-            var deadline = DateTime.UtcNow + _healthTimeout;
+            var startedAt = DateTime.UtcNow;
+            var deadline = startedAt + _healthTimeout;
             while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
             {
                 if (process.HasExited)
@@ -261,7 +312,14 @@ public sealed class RelayManager : IDisposable
                 {
                     return; // stopping — nothing to do
                 }
-                Fail("startup_timeout", "relay did not become healthy within the startup timeout");
+                // Record whether the child ever bound the port: this single field tells the
+                // next investigation apart "relay never listened" from "relay listened but
+                // the health probe could not reach it".
+                var listening = SafePortProbe(_spec.Port);
+                Fail("startup_timeout",
+                    $"relay did not become healthy within the startup timeout " +
+                    $"(pid={process.Id} waited_ms={(int)(DateTime.UtcNow - startedAt).TotalMilliseconds} " +
+                    $"listening={listening} exited={process.HasExited})");
                 TryKill(process);
                 return;
             }
@@ -269,7 +327,13 @@ public sealed class RelayManager : IDisposable
             lock (_lock)
             {
                 _runningSinceUtc = DateTime.UtcNow; // stability window starts on success
+                // A healthy run clears the recovery escalation and supersedes any pending
+                // supervisor: a future crash gets a full, fresh budget.
+                _recoveryRounds = 0;
+                _recoveryPending = false;
+                _recoverySeq++;
             }
+            LastFailureReason = null; // the relay is serving again: no stale failure state
             SetState(RelayState.Running, null);
             _log.Info($"relay_running pid={process.Id} port={_spec.Port}");
         }
@@ -294,11 +358,21 @@ public sealed class RelayManager : IDisposable
         {
             return;
         }
-        _log.Warn($"relay_exited pid={process.Id} code={process.ExitCode}");
+        var exitCode = process.ExitCode;
+        var now = DateTime.UtcNow;
+        TimeSpan uptime;
+        lock (_lock)
+        {
+            _lastExitCode = exitCode;
+            _lastExitAtUtc = now;
+            uptime = _startedAtUtc == DateTime.MinValue ? TimeSpan.Zero : now - _startedAtUtc;
+        }
+        _log.Warn(
+            $"relay_exited pid={process.Id} code={exitCode} " +
+            $"uptime_ms={(int)uptime.TotalMilliseconds} exited_at={Timestamps.UtcNowIso()}");
 
         lock (_lock)
         {
-            var now = DateTime.UtcNow;
             var wasRunningStably = _runningSinceUtc != DateTime.MinValue
                 && (now - _runningSinceUtc) > _successStability;
             var windowExpired = _firstFailureUtc != DateTime.MinValue
@@ -313,7 +387,11 @@ public sealed class RelayManager : IDisposable
             {
                 LastFailureReason = "restart_limit";
                 SetState(RelayState.Failed, "restart_limit");
-                _log.Error($"relay_failed reason=restart_limit attempts={_restartAttempts}");
+                _log.Error($"relay_failed reason=restart_limit attempts={_restartAttempts} last_exit_code={exitCode}");
+                // The bounded budget protects against a restart STORM, it must not be a
+                // dead end: arm the escalating self-recovery supervisor so a transient
+                // failure still heals without the user restarting the app.
+                ArmRecoveryLocked();
                 return;
             }
             var delay = _backoff[Math.Clamp(_restartAttempts - 1, 0, _backoff.Length - 1)];
@@ -341,16 +419,103 @@ public sealed class RelayManager : IDisposable
         }
     }
 
+    /// <summary>
+    /// Arm one recovery supervisor after the manager settled into <see cref="RelayState.Failed"/>.
+    /// After the cool-down it clears the restart budget and starts a fresh attempt sequence.
+    /// Every arm supersedes the previous one (single pending supervisor), the cool-down
+    /// escalates and is capped, and a cancelled/stopped/disposed manager never restarts.
+    /// The caller must hold <see cref="_lock"/>.
+    /// </summary>
+    private void ArmRecoveryLocked()
+    {
+        // One supervisor per failure episode: several failure paths can report the same
+        // stuck episode (Fail(...) plus the Exited handler), and only the first should
+        // consume a cool-down step.
+        if (_stopping || _disposed || !_enabled || _recoveryPending)
+        {
+            return;
+        }
+        var seq = ++_recoverySeq;
+        _recoveryPending = true;
+        var cooldown = _recoveryCooldown[Math.Clamp(_recoveryRounds, 0, _recoveryCooldown.Length - 1)];
+        _recoveryRounds++;
+        _log.Error(
+            $"relay_restart_exhausted attempts={_restartAttempts} last_exit_code={_lastExitCode?.ToString() ?? "none"} " +
+            $"last_error={LastFailureReason ?? "unknown"} recovery_round={_recoveryRounds} " +
+            $"next_retry_in_ms={(int)cooldown.TotalMilliseconds} state=Failed");
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(cooldown).ConfigureAwait(false);
+                lock (_lock)
+                {
+                    // Cancelled/stopped/superseded: never restart.
+                    if (_stopping || _disposed || !_enabled || seq != _recoverySeq)
+                    {
+                        return;
+                    }
+                    _recoveryPending = false;
+                    if (State != RelayState.Failed)
+                    {
+                        return; // recovered through another path in the meantime
+                    }
+                    _restartAttempts = 0; // fresh bounded budget for the recovery round
+                    _firstFailureUtc = DateTime.MinValue;
+                    _log.Warn(
+                        $"relay_recovery_attempt round={_recoveryRounds} after_exhausted=true reason={LastFailureReason ?? "unknown"}");
+                }
+                Start();
+            }
+            catch (OperationCanceledException)
+            {
+                // shutting down
+            }
+        });
+    }
+
     private void Fail(string reason, string detail)
     {
         LastFailureReason = reason;
         _log.Error($"relay_failed reason={reason} detail={detail}");
         SetState(RelayState.Failed, reason);
+        lock (_lock)
+        {
+            // Failure paths that never produce an Exited event (port_in_use, spawn_failed)
+            // would otherwise be permanent. When a live child exists its exit drives the
+            // normal bounded-restart flow, which arms recovery itself if it exhausts.
+            if (_process is not { HasExited: false })
+            {
+                ArmRecoveryLocked();
+            }
+        }
     }
+
+    private bool SafePortProbe(int port)
+    {
+        try
+        {
+            return _portProbe(port);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private RelayState _lastNotifiedState = RelayState.Stopped;
 
     private void SetState(RelayState state, string? reason)
     {
         State = state;
+        // StateChanged means "the state changed". A stuck episode reports Failed more than
+        // once with different reasons (startup_timeout, then restart_limit, then once per
+        // recovery cool-down) and the tray must not balloon once per report.
+        if (state == _lastNotifiedState)
+        {
+            return;
+        }
+        _lastNotifiedState = state;
         StateChanged?.Invoke(state, reason);
     }
 
