@@ -40,14 +40,27 @@ function Wait-Until([scriptblock]$cond, [int]$timeoutSec = 30, [int]$intervalMs 
     return $false
 }
 
-# GUI subsystem exe: `&` does not wait for it; use Start-Process -Wait with redirected output.
+# GUI subsystem exe: `&` does not wait for it, so run it with redirected output.
+# System.Diagnostics.Process is used instead of Start-Process: the latter throws on
+# machines whose environment contains both HTTPS_PROXY and https_proxy (case-only
+# duplicates are legal in Windows but rejected by PowerShell 5.1's Start-Process).
 function Invoke-ClipBridgeCommand([string]$arguments) {
-    $out = Join-Path $env:TEMP ('cb-cmd-' + [guid]::NewGuid().ToString('N') + '.txt')
-    $p = Start-Process -FilePath $exe -ArgumentList $arguments -Wait -NoNewWindow `
-        -RedirectStandardOutput $out -PassThru
-    $text = if (Test-Path $out) { [System.IO.File]::ReadAllText($out).Trim() } else { '' }
-    Remove-Item $out -Force -ErrorAction SilentlyContinue
-    return $text
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $exe
+    $psi.Arguments = $arguments
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    $p = [System.Diagnostics.Process]::Start($psi)
+    try {
+        $text = $p.StandardOutput.ReadToEnd()
+        $null = $p.StandardError.ReadToEnd()
+        if (-not $p.WaitForExit(30000)) { try { $p.Kill() } catch { } }
+        return $text.Trim()
+    } finally { $p.Dispose() }
 }
 
 function Get-OwnClientProcesses {
@@ -71,63 +84,117 @@ function Get-OwnRelayProcesses([int]$parentPid = 0) {
     return $own
 }
 
-function Get-Health([int]$port) {
-    try { return (Invoke-RestMethod "http://127.0.0.1:$port/api/v1/health" -TimeoutSec 2).status -eq 'ok' } catch { return $false }
+# Local API call that never uses a proxy: the harness must talk to 127.0.0.1 directly.
+# Invoke-RestMethod follows the machine's WinINET proxy, which on some networks rewrites or
+# rejects bodies sent to loopback (observed as mangled Unicode / 404). WebRequest with
+# .Proxy = $null is used because Windows PowerShell 5.1 has no -NoProxy switch.
+# The product's proxy behaviour is intentionally unchanged; this only isolates test traffic.
+function Invoke-LocalJson([string]$method, [string]$uri, [string]$token = '', $body = $null) {
+    try {
+        $request = [System.Net.WebRequest]::Create($uri)
+        $request.Method = $method
+        $request.Proxy = $null
+        $request.Timeout = 8000
+        $request.ReadWriteTimeout = 8000
+        if ($token) { $request.Headers['Authorization'] = "Bearer $token" }
+        if ($null -ne $body) {
+            $json = $body | ConvertTo-Json -Depth 5 -Compress
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+            $request.ContentType = 'application/json; charset=utf-8'
+            $request.ContentLength = $bytes.Length
+            $stream = $request.GetRequestStream()
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Close()
+        }
+        $response = $request.GetResponse()
+        $reader = New-Object System.IO.StreamReader($response.GetResponseStream(), [System.Text.Encoding]::UTF8)
+        $text = $reader.ReadToEnd()
+        $reader.Close()
+        $response.Close()
+        if (-not $text) { return $null }
+        return ($text | ConvertFrom-Json)
+    } catch { return $null }
 }
 
-# The OS clipboard can be held by other processes (another harness runs on this machine),
-# which makes [System.Windows.Forms.Clipboard]-style calls block for ~60 s. Run every
-# clipboard operation in a bounded child process so the harness can never hang.
-# The OS clipboard can be held by other processes (another harness runs on this machine),
-# which makes [System.Windows.Forms.Clipboard]-style calls block for ~60 s. Run every
-# clipboard operation in a bounded child process (temp script file → no quoting issues)
-# so the harness can never hang.
+function Get-Health([int]$port) {
+    $r = Invoke-LocalJson 'GET' "http://127.0.0.1:$port/api/v1/health"
+    return ($null -ne $r -and $r.status -eq 'ok')
+}
+
+# The OS clipboard can be held by other processes (another harness may run on this
+# machine), which makes Clipboard calls block for ~60 s. Every clipboard operation runs in
+# a bounded child process so the harness can never hang; the text is transported as Base64
+# because a redirected child's stdout uses the console code page (GBK on many CN machines),
+# which silently destroys characters such as emoji.
 function Invoke-ClipboardSet([string]$value) {
     $ps1 = Join-Path $env:TEMP ('cb-set-' + [guid]::NewGuid().ToString('N') + '.ps1')
+    $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($value))
     Set-Content -Path $ps1 -Encoding UTF8 -Value @"
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false)
 Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.Clipboard]::SetText('$value', [System.Windows.Forms.TextDataFormat]::UnicodeText)
+`$text = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$b64'))
+[System.Windows.Forms.Clipboard]::SetText(`$text, [System.Windows.Forms.TextDataFormat]::UnicodeText)
 "@
-    $p = Start-Process powershell -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File',$ps1 -PassThru -WindowStyle Hidden
-    $ok = $p.WaitForExit(6000)
-    if (-not $ok) { $p.Kill() }
-    Remove-Item $ps1 -Force -ErrorAction SilentlyContinue
-    return $ok
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = 'powershell'
+        $psi.Arguments = "-NoProfile -STA -ExecutionPolicy Bypass -File `"$ps1`""
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $ok = $p.WaitForExit(6000)
+        if (-not $ok) { try { $p.Kill() } catch { } }
+        $p.Dispose()
+        return $ok
+    } finally { Remove-Item $ps1 -Force -ErrorAction SilentlyContinue }
 }
 
 function Invoke-ClipboardGet() {
-    $out = Join-Path $env:TEMP ('cb-get-' + [guid]::NewGuid().ToString('N') + '.txt')
     $ps1 = Join-Path $env:TEMP ('cb-get-' + [guid]::NewGuid().ToString('N') + '.ps1')
     Set-Content -Path $ps1 -Encoding UTF8 -Value @"
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false)
 Add-Type -AssemblyName System.Windows.Forms
-Write-Output ([System.Windows.Forms.Clipboard]::GetText([System.Windows.Forms.TextDataFormat]::UnicodeText))
+`$text = [System.Windows.Forms.Clipboard]::GetText([System.Windows.Forms.TextDataFormat]::UnicodeText)
+Write-Output ([Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(`$text)))
 "@
-    $p = Start-Process powershell -ArgumentList '-NoProfile','-STA','-ExecutionPolicy','Bypass','-File',$ps1 `
-        -PassThru -WindowStyle Hidden -RedirectStandardOutput $out
-    if (-not $p.WaitForExit(6000)) {
-        $p.Kill()
-        Remove-Item $out,$ps1 -Force -ErrorAction SilentlyContinue
-        return $null
-    }
-    # Write-Output appends a line terminator; trim it away (markers have no trailing spaces).
-    $text = if (Test-Path $out) { [System.IO.File]::ReadAllText($out).Trim() } else { '' }
-    Remove-Item $out,$ps1 -Force -ErrorAction SilentlyContinue
-    return $text
+    # .NET Process, not Start-Process: on machines whose environment contains both
+    # HTTPS_PROXY and https_proxy, Start-Process with redirection throws before launching.
+    try {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = 'powershell'
+        $psi.Arguments = "-NoProfile -STA -ExecutionPolicy Bypass -File `"$ps1`""
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.CreateNoWindow = $true
+        $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $b64 = $p.StandardOutput.ReadToEnd().Trim()
+        if (-not $p.WaitForExit(6000)) { try { $p.Kill() } catch { } }
+        $p.Dispose()
+        if (-not $b64) { return $null }
+        try { return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)) }
+        catch { return $null }
+    } catch { return $null }
+    finally { Remove-Item $ps1 -Force -ErrorAction SilentlyContinue }
 }
 
 if (-not (Test-Path $exe)) { Write-Host "Artifact not found: $exe (run scripts\build-daily.ps1 first)"; exit 1 }
-if (-not (Test-Path $configPath)) { Write-Host "No %APPDATA%\ClipBridge\config.json — configure DeviceToken first"; exit 1 }
-$cfg = Get-Content $configPath -Raw | ConvertFrom-Json
-if (-not $cfg.DeviceToken) { Write-Host 'config.json has no DeviceToken'; exit 1 }
+# A config is no longer required to run the artifact (first start provisions one), but a
+# pre-existing config is still a useful sanity signal on a developer machine.
+if (-not (Test-Path $configPath)) { Write-Host "NOTE: no %APPDATA%\ClipBridge\config.json — the run will auto-provision one" -ForegroundColor Yellow }
 
 # ---------------------------------------------------------------- hermetic environment (before any launch)
+# - unique CLIPBRIDGE_HOME: config, database, logs and the relay's SQLite store are this
+#   run's own. Without it the verify instance shares the live user's DB, so clips posted
+#   here show up in the user's history and vice versa (observed as clipboard cross-talk).
+# - unique DEVICE ID: the shared clipboard can be read by another running ClipBridge
+#   instance; a distinct device id keeps the two histories unambiguous.
 # - unique single-instance id: never fights a real running ClipBridge
 # - unique .local hostname: never conflicts with another responder
 # - unique DEVICE TOKEN (env > config): the managed relay only accepts THIS run, so any
-#   other process on the machine (another agent's test harness) is rejected with 401
-#   and cannot pollute the verification.
+#   other process on the machine is rejected with 401 and cannot pollute the verification.
+$verifyHome = Join-Path $env:TEMP ('clipbridge-verify-home-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Force -Path $verifyHome | Out-Null
+$env:CLIPBRIDGE_HOME = $verifyHome
+$env:CLIPBRIDGE_DEVICE_ID = 'windows-verify'
 $env:CLIPBRIDGE_RELAY_PORT = "$VerifyPort"
 $env:CLIPBRIDGE_RELAY_URL = "http://127.0.0.1:$VerifyPort"
 $env:CLIPBRIDGE_INSTANCE_ID = 'clipbridge-verify-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
@@ -135,6 +202,16 @@ $env:CLIPBRIDGE_LAN_HOSTNAME = 'clipbridge-verify'
 $VerifyToken = 'verify-' + [guid]::NewGuid().ToString('N')
 $env:CLIPBRIDGE_DEVICE_TOKEN = $VerifyToken
 $env:CLIPBRIDGE_POLL_INTERVAL_MS = '1000'
+
+# Test-environment only: keep the app's loopback traffic out of any system proxy while the
+# verification runs. The product's proxy handling is deliberately unchanged (see
+# docs/PORTABILITY.md §3.6); without this a machine-wide proxy would sit between the app
+# and its own relay and the clipboard checks could not be measured.
+if ($env:HTTP_PROXY -or $env:HTTPS_PROXY -or $env:http_proxy -or $env:https_proxy) {
+    $env:NO_PROXY = (@('127.0.0.1', 'localhost', $env:NO_PROXY) | Where-Object { $_ }) -join ','
+    $env:no_proxy = $env:NO_PROXY
+    Write-Host "NOTE: proxy detected - NO_PROXY extended with loopback for this run only" -ForegroundColor Yellow
+}
 
 # ---------------------------------------------------------------- preflight: nothing else on our id/port
 $existing = Invoke-ClipBridgeCommand '--status'
@@ -226,8 +303,8 @@ for ($attempt = 1; $attempt -le 8 -and -not $d1Ok; $attempt++) {
     $marker = "verify-daily-" + [guid]::NewGuid().ToString('N')
     if (-not (Invoke-ClipboardSet $marker)) { continue }
     $d1Ok = Wait-Until {
-        $latest = Invoke-RestMethod -Uri "http://127.0.0.1:$VerifyPort/api/v1/clips/latest?exclude_device_id=iphone" -Headers @{Authorization="Bearer $VerifyToken"} -TimeoutSec 2
-        $latest.content -eq $marker
+        $latest = Invoke-LocalJson 'GET' "http://127.0.0.1:$VerifyPort/api/v1/clips/latest?exclude_device_id=iphone" $VerifyToken
+        $latest -and $latest.content -eq $marker
     } 4 300
 }
 Assert-True ($d1Ok) 'D1: Windows clipboard -> packaged relay'
@@ -235,9 +312,7 @@ Assert-True ($d1Ok) 'D1: Windows clipboard -> packaged relay'
 $d2Ok = $false
 for ($attempt = 1; $attempt -le 8 -and -not $d2Ok; $attempt++) {
     $unicode = "来自 iPhone 的验证 🐱🚀 " + [guid]::NewGuid().ToString('N') + [Environment]::NewLine + "second line"
-    $null = Invoke-RestMethod -Method POST -Uri "http://127.0.0.1:$VerifyPort/api/v1/clips/shortcut" `
-        -Headers @{Authorization="Bearer $VerifyToken"} -ContentType 'application/json; charset=utf-8' `
-        -Body (@{ device_id = 'iphone'; content = $unicode } | ConvertTo-Json -Depth 3) -TimeoutSec 5
+    $null = Invoke-LocalJson 'POST' "http://127.0.0.1:$VerifyPort/api/v1/clips/shortcut" $VerifyToken @{ device_id = 'iphone'; content = $unicode }
     $d2Ok = Wait-Until { (Invoke-ClipboardGet) -eq $unicode } 4 300
 }
 Assert-True ($d2Ok) 'D2: packaged relay -> Windows clipboard (exact Unicode)'
@@ -267,6 +342,8 @@ $portFree = -not (Get-NetTCPConnection -LocalPort $VerifyPort -State Listen -Err
 Assert-True ($portFree) 'F: verify port released after exit'
 
 # ---------------------------------------------------------------- report
+# The isolated profile is disposable: its DB/logs only describe this run.
+try { Remove-Item -LiteralPath $verifyHome -Recurse -Force -ErrorAction SilentlyContinue } catch { }
 Write-Host ''
 Write-Host '=== verify-daily RESULTS ===' -ForegroundColor Cyan
 $failed = 0

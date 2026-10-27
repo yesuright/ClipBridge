@@ -3,11 +3,17 @@
 个人使用的跨设备**纯文本剪贴板同步**工具：Windows 11 PC 与 iPhone 之间互相传递长文本
 （AI prompt / handoff / 日志 / 代码），不再依赖微信、QQ 等聊天软件。
 
-> **Milestone 4 — Polished Windows UI**：Home / History / Settings 原生主窗口，
-> Light / Dark / System 主题、原创图标、托盘和安全复制。同步核心与 API 保持不变。
-> iPhone 使用当前 PC 的 LAN IP 地址；`.local` 实验未在真实 iPhone 上成功。
-> M4 iPhone 回归：**READY_FOR_USER_RETEST**。iPad 继续使用 Apple Universal Clipboard，
-> 不作为单独产品界面。设计及行为见 [docs/UI.md](docs/UI.md)。
+> **Portability hardening**：ClipBridge 现在可以在**陌生用户的 Windows 电脑**上直接运行 ——
+> 首次启动自动生成本机 token/设备身份并弹出 `Connect your iPhone` 设置窗口；
+> 配置/数据使用标准用户目录，与用户名、安装路径、工作目录无关；端口被占用会自动回退并持久化；
+> 配置损坏会先备份再恢复；安装目录移动后自启动项自动修正。
+> 代理相关行为**保持原样未改动**（用户日常常开代理；已知边界见 docs/PORTABILITY.md §3.6）。
+> 审计清单、设计取舍与验证证据见 [docs/PORTABILITY.md](docs/PORTABILITY.md)。
+>
+> 上一里程碑（M4）为 Windows 主窗口 / 主题 / 安全复制，界面设计见 [docs/UI.md](docs/UI.md)；
+> 同步核心与 iPhone API 保持不变。`.local` 仍为实验特性，iPhone 使用当前 PC 的 LAN IP。
+> iPad 继续使用 Apple Universal Clipboard，不作为单独产品界面。
+> M4 iPhone 真机回归：**READY_FOR_USER_RETEST**（本轮未改协议，仍需真机确认一次）。
 
 ---
 
@@ -58,6 +64,7 @@ ClipBridge/
 ├─ scripts/
 │  ├─ build-daily.ps1          # 构建 daily-use artifact（publish + pyinstaller → artifacts\ClipBridge）
 │  ├─ verify-daily.ps1         # daily artifact 集成冒烟测试（单实例/崩溃恢复/无孤儿/干净退出…）
+│  ├─ verify-portability.ps1   # 跨用户/跨路径/端口冲突/损坏配置/缺组件 的隔离环境验证
 │  ├─ dev-relay.ps1 / dev-client.ps1 / start-lan-dev.ps1 / show-lan-setup.ps1
 │  ├─ lib/LanSetup.psm1        # 可测试的 LAN 地址选择逻辑
 │  └─ tests/test-lan-setup.ps1 # LAN 逻辑单测
@@ -76,8 +83,16 @@ powershell -ExecutionPolicy Bypass -File scripts\build-daily.ps1
 ```
 
 之后用户只需要：**双击 `artifacts\ClipBridge\ClipBridge.exe`**。
-主窗口提供 Home / History / Settings。开机自启、暂停/恢复、复制 iPhone 地址和日志也可通过托盘操作。
-详细普通用户指南：`docs/DAILY_USE.md`；进程/生命周期细节：`docs/LIFECYCLE.md`。
+
+首次启动会自动完成配置（不需要手工编辑 JSON）：
+
+1. 生成这台电脑专属的访问 token 和设备 ID，写入 `%APPDATA%\ClipBridge\config.json`；
+2. 弹出 `Connect your iPhone`，显示**地址**和**token**，直接填进两个 Shortcut；
+3. 之后随时可从托盘 `Connection setup…` 或 Settings 再次打开。
+
+开机自启、暂停/恢复、复制 iPhone 地址和日志也可通过托盘操作。
+详细普通用户指南：`docs/DAILY_USE.md`；进程/生命周期细节：`docs/LIFECYCLE.md`；
+可移植性设计与验收：`docs/PORTABILITY.md`。
 
 ## 快速开始（本地开发）
 
@@ -144,15 +159,15 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8787/api/v1/clips/latest?exclude_device
 ## 如何测试
 
 ```powershell
-# Relay 单元/集成测试（98 个：含 shortcut 简化创建 / exclude_device_id / 去重 / Unicode /
-#   admin shutdown 端点…）
+# Relay 单元/集成测试（104 个：含 shortcut 简化创建 / exclude_device_id / 去重 / Unicode /
+#   admin shutdown / 打包路径与端口冲突退出码…）
 cd services\relay
 .\.venv\Scripts\pip install -r requirements-dev.txt
 .\.venv\Scripts\python -m pytest
 
-# Windows 单元测试（160 个：含 M4 界面/安全复制/主题，以及 M2/M3 生命周期/状态/LAN/
-#   mDNS 编解码/配置迁移/日志轮转/启动注册…）
-dotnet test apps\windows\ClipBridge.sln
+# Windows 单元测试（275 个：含 M4 界面/安全复制/主题，M2/M3 生命周期/状态/LAN/mDNS/配置迁移，
+#   以及本轮新增的路径解析、配置自愈、首次配置、端口回退、自启动修复…）
+dotnet test apps\windows\tests\ClipBridge.Core.Tests
 
 # LAN helper 逻辑测试（纯函数，无需 Pester）
 powershell -ExecutionPolicy Bypass -File scripts\tests\test-lan-setup.ps1
@@ -166,6 +181,10 @@ powershell -ExecutionPolicy Bypass -File tests\e2e\cold-path-reliability.ps1 -Cy
 
 # daily artifact 集成冒烟（无控制台/单实例/relay 启动/崩溃恢复/干净退出/无孤儿）
 powershell -ExecutionPolicy Bypass -File scripts\verify-daily.ps1
+
+# 跨环境可移植性验证（隔离 HOME/实例 ID：全新配置、中文路径、端口冲突、重复启动、
+#   损坏配置、缺 relay 组件、剪贴板→relay 链路）— 不触碰真实用户配置
+powershell -ExecutionPolicy Bypass -File scripts\verify-portability.ps1
 
 # Relay lifecycle 恢复压测（意外退出 → 自动恢复；restart budget 耗尽 → 自动自愈，无需用户重启）
 # 20 次 kill/recover + 4 次完整重启 + 2 轮「耗尽 budget → 自愈 → 稳定运行 → 再次崩溃仍能恢复」
@@ -194,10 +213,14 @@ ClipBridge 在 **4 层**防御：
 - 仅纯文本（`text/plain`）；非文本剪贴板被忽略
 - 本地 HTTP + token；**LAN 明文 HTTP 仅限可信私有网络**，生产需 HTTPS（见 `docs/SECURITY.md`）
 - 无离线队列；网络恢复后自动恢复同步
-- 无安装器、自动更新、代码签名（后续里程碑）
+- 无安装器、自动更新、代码签名（后续里程碑）；未签名 exe 首次运行会有 SmartScreen 提示
 - token 为全设备共享（无 per-device 键）；E2E 加密为未来方向，本轮未实现
 - 剪贴板在 Windows 侧被其他程序短占时，客户端重试 5 次后跳过该次复制（不崩溃）
-- M3 已由用户完成 iPhone 双向验证；M4 真机回归待用户执行（`docs/DEVICE_TEST.md`）
+- **代理行为保持现状**（用户日常常开代理）：relay 客户端沿用 .NET 默认代理解析。
+  若某个环境用 `HTTP_PROXY` 强制所有流量走代理且未排除 `127.0.0.1`，
+  本机同步请求可能被代理截获；已知边界与后续选项见 `docs/PORTABILITY.md` §3.6。
+- M3 已由用户完成 iPhone 双向验证；M4/本轮真机回归待用户执行（`docs/DEVICE_TEST.md`）
+- 真实"第二台干净 Windows 电脑 / 虚拟机"验收尚未执行，步骤见 `docs/PORTABILITY.md` 第 5 节
 
 ## 文档索引
 

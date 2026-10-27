@@ -94,15 +94,27 @@ original icon. Close hides; explicit Exit ClipBridge shuts down. Logs are in
 | --- | --- | --- |
 | `CLIPBRIDGE_RELAY_URL` | `http://127.0.0.1:8787` | base URL; `/api/v1` appended |
 | `CLIPBRIDGE_DEVICE_ID` | `windows-main` | any `[A-Za-z0-9_-]{1,64}` |
-| `CLIPBRIDGE_DEVICE_TOKEN` | — | **required** |
+| `CLIPBRIDGE_DEVICE_TOKEN` | — | auto-generated on first run (env only overrides, never persisted) |
 | `CLIPBRIDGE_POLL_INTERVAL_MS` | `2000` | clamped 500–60000 |
 | `CLIPBRIDGE_HTTP_TIMEOUT_SECONDS` | `20` | clamped 5–300 |
 | `CLIPBRIDGE_SUPPRESS_WINDOW_SECONDS` | `30` | applied-remote echo window |
 | `CLIPBRIDGE_UPLOAD_MEMORY_SECONDS` | `900` | own-upload echo memory |
 | `CLIPBRIDGE_MANAGE_RELAY` | `true` | tray app owns the relay child (set `0` for external-relay dev mode) |
 | `CLIPBRIDGE_LAN_HOSTNAME` | `clipbridge` | mDNS single-label name (→ `clipbridge.local`) |
-| `CLIPBRIDGE_RELAY_PORT` | `8787` | port the managed relay binds (must match RelayUrl) |
+| `CLIPBRIDGE_LAN_IP` | *(auto)* | force the LAN address shown to the iPhone (ignored if absent) |
+| `CLIPBRIDGE_RELAY_PORT` | `8787` | port the managed relay binds (kept in sync with RelayUrl) |
 | `CLIPBRIDGE_SHOW_TRAY_ICON` | `true` | — |
+
+### Client storage overrides (paths)
+
+| Variable | Effect |
+| --- | --- |
+| `CLIPBRIDGE_HOME` | single root: `<home>\config` + `<home>\data` (tests, portable use) |
+| `CLIPBRIDGE_CONFIG_DIR` | config directory only (default `%APPDATA%\ClipBridge`) |
+| `CLIPBRIDGE_DATA_DIR` | data directory only (default `%LOCALAPPDATA%\ClipBridge`) |
+
+Relative paths are rejected on purpose (no implicit dependency on the working directory).
+`ClipBridge.exe --doctor` prints the resolved layout and the config state.
 
 ### Daily-use build (Milestone 4)
 
@@ -112,9 +124,21 @@ powershell -ExecutionPolicy Bypass -File scripts\build-daily.ps1
 powershell -ExecutionPolicy Bypass -File scripts\verify-daily.ps1   # integration smoke
 ```
 
+Building while the daily app is running will fail: Windows holds file locks inside
+`artifacts\ClipBridge\relay`. Either exit ClipBridge first, or build a second copy for
+testing (the running installation is untouched):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-daily.ps1 -OutputDir artifacts\ClipBridge-verify
+```
+
 Client CLI (scriptable): `--status` (JSON status line from the running instance),
-`--exit` (graceful quit), `--enable-autostart` / `--disable-autostart` / `--autostart-status`,
+`--exit` (graceful quit), `--doctor` (paths/config/relay/LAN/autostart diagnostics, no token),
+`--enable-autostart` / `--disable-autostart` / `--autostart-status`,
 `--tray-autostart` (used by the Startup registration).
+
+Portability design, audit findings and the clean-machine acceptance checklist:
+`docs/PORTABILITY.md`. Cross-environment harness: `scripts\verify-portability.ps1`.
 
 UI source is in `apps/windows/src/ClipBridge.Win/UI`; its tests run in the existing
 solution. The native reader wraps long lines; Copy text preserves the original record.

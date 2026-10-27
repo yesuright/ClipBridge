@@ -17,16 +17,19 @@
 
 param(
     [string]$Configuration = 'Release',
-    [string]$Runtime = 'win-x64'
+    [string]$Runtime = 'win-x64',
+    # Default keeps the documented artifacts\ClipBridge location. Pass another folder to
+    # build and test a second copy while the installed one is running (the running app
+    # holds file locks inside artifacts\ClipBridge\relay and cannot be replaced in place).
+    [string]$OutputDir = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $artifactDisk = Join-Path $root 'build\dist-daily'
-$artifact = Join-Path $root 'artifacts\ClipBridge'
+$artifact = if ($OutputDir) { [IO.Path]::GetFullPath($OutputDir) } else { Join-Path $root 'artifacts\ClipBridge' }
 # Never clean a computed path unless it resolves inside the canonical workspace.
-if ([IO.Path]::GetFullPath($artifact) -ne [IO.Path]::GetFullPath((Join-Path $root 'artifacts\ClipBridge')) -or
-    -not [IO.Path]::GetFullPath($artifact).StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+if (-not [IO.Path]::GetFullPath($artifact).StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'Artifact path is outside the ClipBridge workspace.'
 }
 
@@ -98,17 +101,24 @@ ClipBridge - daily use
 ======================
 
 Start:   double-click ClipBridge.exe (nothing else to run or install)
+Setup:   on first start ClipBridge creates its own access token and shows a
+         "Connect your iPhone" window with the address + token for both Shortcuts.
+         Open it again any time: tray icon -> Connection setup...
 Open:    click the tray icon (Home / History / Settings)
 Hide:    close the window; sync keeps running in the tray
 Stop:    right-click the tray icon -> Exit ClipBridge
 Logs:    %LOCALAPPDATA%\ClipBridge\logs\
 Data:    %LOCALAPPDATA%\ClipBridge\clipbridge.db
-Config:  %APPDATA%\ClipBridge\config.json   (set DeviceToken to your relay token)
+Config:  %APPDATA%\ClipBridge\config.json
+Doctor:  ClipBridge.exe --doctor      (paths, config state, relay, LAN URL, autostart)
 LAN URL: Home -> iPhone connection -> Copy address
          Use the current PC LAN IP, e.g. http://192.168.1.14:8787
 Theme:   Settings -> Appearance -> System / Light / Dark
 
+Portable/test: set CLIPBRIDGE_HOME to a folder to keep config + data there.
+
 iPhone: see DAILY_USE.md next to this file. Never forward port 8787 on your router.
+If Windows Firewall asks about ClipBridgeRelay.exe, allow it on private networks only.
 "@ | Set-Content -Path (Join-Path $artifact 'README.txt') -Encoding UTF8
 
 Write-Host ''
