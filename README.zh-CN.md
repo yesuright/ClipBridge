@@ -1,12 +1,12 @@
 # ClipBridge（中文说明）
 
-**Windows 电脑与 iPhone 之间的剪贴板同步——纯文本、局域网直连、不经过云端。**
+**Windows 电脑与 iPhone 之间的剪贴板同步——纯文本、不依赖云端、默认只在局域网内传输。**
 
 英文说明见 [README.md](README.md)。本页是同一份内容的中文版本。
 
 ClipBridge 把长文本（AI prompt / 日志 / 代码片段 / 链接 / 笔记）在 Windows 剪贴板和
-iOS 剪贴板之间互传，走你自己的 Wi-Fi：一边复制，另一边粘贴。数据不经过任何第三方
-服务器，不需要注册账号。
+iOS 剪贴板之间互传，走你自己的 Wi-Fi：一边复制，另一边粘贴。数据不经过任何第三方服务器，不需要注册账号：默认配置下，剪贴板
+流量只在你自己的局域网内传输（已知例外场景见 [Known Issues](#known-issues) 的 HTTP 代理条目）。
 
 ```text
 Windows  Ctrl+C ──►  ClipBridge 客户端 ──► 本机 Relay ──► SQLite
@@ -26,7 +26,7 @@ iPhone 复制 ──►「Send to ClipBridge」──► 本机 Relay ──► 
 聊天软件当“传输桥”意味着你的 prompt、日志、代码要过别人的服务器，还会被截断或改格式。
 ClipBridge 保留同样的使用习惯，但数据只在你的设备之间：
 
-- **纯本地**：Relay 跑在你自己的电脑上，流量不出局域网。
+- **纯本地**：Relay 跑在你自己的电脑上；默认配置下流量只在局域网内传输（代理场景的例外见 [Known Issues](#known-issues)）。
 - **逐字节一致**：Unicode、emoji、引号、反斜杠、Tab、CRLF、上百 KB 的长文本原样到达
   （单条上限 2 MiB）。
 - **日常零操作**：双击一个 exe，Relay 作为子进程自动管理。
@@ -83,7 +83,7 @@ ClipBridge 保留同样的使用习惯，但数据只在你的设备之间：
 
 1. **Text** —— 中继地址，例如 `http://192.168.1.14:8787`（结尾不加 `/`）
 2. **Text** —— 访问 token（只填 43 位字符串本身，不要带 `Bearer `）
-3. **Text** —— 本机设备 ID，例如 `iphone`（仅字母数字 `-` `_`）
+3. **Text** —— 本机设备 ID（自行命名，例如 `iphone`；仅字母数字 `-` `_`）
 4. **获取剪贴板**
 5. **如果**（剪贴板）有任何值 → **获取 URL 内容**：
    - 方法 **POST**，URL 填 `[地址]/api/v1/clips/shortcut`
@@ -96,8 +96,11 @@ ClipBridge 保留同样的使用习惯，但数据只在你的设备之间：
 
 1. **Text** —— 中继地址（同上）
 2. **Text** —— 访问 token
-3. **Text** —— 本机设备 ID（如 `iphone`）
-4. **URL** —— `[地址]/api/v1/clips?limit=10&exclude_device_id=iphone`
+3. **Text** —— 本机设备 ID（自行命名，如 `iphone`；仅字母数字 `-` `_`，≤64 字符，
+   无需注册——Relay 不保存任何设备状态）
+4. **URL** —— `[地址]/api/v1/clips?limit=10&exclude_device_id=<你的设备ID>` ——
+   **必须与第 3 步填的值完全一致**：本机取名 `iphone` 时就是 `exclude_device_id=iphone`；
+   用了别的名字就填同一个名字。`limit` 会被 Relay 钳制在 1–200（默认 50）。
 5. **获取 URL 内容**（GET）—— 请求头 `Authorization` = `Bearer ` + token 变量
 6. **从输入获取字典** → **获取字典值** `clips`
 7. **如果**（clips）有任何值 → **从列表获取项**（第一项）→ **获取字典值** `content` →
@@ -105,7 +108,7 @@ ClipBridge 保留同样的使用习惯，但数据只在你的设备之间：
 8. 可选：用 `size_bytes` / `device_id` 做通知
 9. 把两个快捷指令都放到主屏幕或操作按钮
 
-> `exclude_device_id` 的作用是“不取回自己刚发出的内容”。更详细的图文步骤见
+> `exclude_device_id` 的作用是“不取回自己刚发出的内容”。Relay 返回发送者 ID 不等于你所传值的最新一条，所以该值必须与第 3 步的设备 ID 一致：此处使用的列表接口在历史为空时返回 `200` 与空 `clips` 列表；`GET [地址]/api/v1/clips/latest` 在空时返回 `404 not_found`（快捷指令会显示获取失败，属正常空态，见排障表）。更详细的图文步骤见
 > [shortcuts/SEND_TO_CLIPBRIDGE.md](shortcuts/SEND_TO_CLIPBRIDGE.md) 与
 > [shortcuts/GET_FROM_CLIPBRIDGE.md](shortcuts/GET_FROM_CLIPBRIDGE.md)。
 
@@ -165,7 +168,7 @@ ClipBridge 保留同样的使用习惯，但数据只在你的设备之间：
 
 完整威胁模型见 [docs/SECURITY.md](docs/SECURITY.md)。要点：
 
-- **无云、无遥测、无账号**。唯一的网络对端是你自己电脑上的 Relay，流量不出局域网。
+- **无云、无遥测、无账号**。唯一的网络对端是你自己电脑上的 Relay；默认配置下流量只在局域网内传输（已知例外见 [Known Issues](#known-issues) 的 HTTP 代理条目）。
 - **认证**：所有 API 请求携带 256-bit 随机 token（每台安装各自生成），常数时间比较。
 - **传输是局域网明文 HTTP**：token 与剪贴板文本在传输中不加密。这是本版本公开声明的
   取舍——只用于可信的家庭/办公 Wi-Fi，不要在公共 Wi-Fi 使用，**不要在路由器做端口转发**。
@@ -239,17 +242,18 @@ LAN 地址、自启动健康；只打印 8 位 token 指纹，不打印 token）
 前置：**.NET 8 SDK** 与 **Python 3.12+**（3.13 已测试）。脚本以 Windows PowerShell 5.1 为准。
 
 ```powershell
-# 1. Relay（开发运行，仅回环）
+# 1. Relay（开发运行，仅回环）——从仓库根目录开始
 cd services\relay
 python -m venv .venv
 .\.venv\Scripts\pip install -r requirements.txt
 Copy-Item .env.example .env          # 设置 CLIPBRIDGE_TOKEN（必填，缺失即拒绝启动）
 .\.venv\Scripts\python run.py        # http://127.0.0.1:8787（Swagger 见 /docs）
+cd ..\..                             # 回到仓库根目录
 
-# 2. Windows 客户端（开发运行）
+# 2. Windows 客户端（开发运行）——在仓库根目录执行
 dotnet run --project apps\windows\src\ClipBridge.Win
 
-# 3. 发布构建（self-contained 客户端 + PyInstaller Relay）
+# 3. 发布构建（self-contained 客户端 + PyInstaller Relay）——在仓库根目录执行
 powershell -ExecutionPolicy Bypass -File scripts\build-daily.ps1 -OutputDir artifacts\ClipBridge
 ```
 
@@ -261,7 +265,9 @@ powershell -ExecutionPolicy Bypass -File scripts\build-daily.ps1 -OutputDir arti
 
 ```powershell
 # Relay 单元/集成测试
-cd services\relay && .\.venv\Scripts\python -m pytest && cd ..\..
+cd services\relay
+.\.venv\Scripts\python -m pytest
+cd ..\..
 
 # Windows 核心测试
 dotnet test apps\windows\tests\ClipBridge.Core.Tests

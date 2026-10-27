@@ -227,5 +227,6 @@ pre-existing `.env` / client config.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\secret-scan.ps1
-git status && git diff --cached
+git status
+git diff --cached
 ```

@@ -27,14 +27,15 @@ to get a development environment running and a change accepted.
 Prerequisites: .NET 8 SDK, Python 3.12+ (3.13 tested), Windows.
 
 ```powershell
-# Relay
+# Relay — from the repo root
 cd services\relay
 python -m venv .venv
 .\.venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt
 Copy-Item .env.example .env          # set CLIPBRIDGE_TOKEN
 .\.venv\Scripts\python run.py
+cd ..\..                             # back to the repo root
 
-# Client
+# Client — from the repo root
 dotnet run --project apps\windows\src\ClipBridge.Win
 ```
 
@@ -46,7 +47,11 @@ Run the relevant layers of the test pyramid and paste the real results (counts, 
 failure output if any) into the PR description:
 
 ```powershell
-cd services\relay && .\.venv\Scripts\python -m pytest && cd ..\..
+cd services\relay
+.\.venv\Scripts\python -m pytest
+cd ..\..
+
+# from the repo root:
 dotnet test apps\windows\tests\ClipBridge.Core.Tests
 powershell -ExecutionPolicy Bypass -File scripts\secret-scan.ps1
 ```

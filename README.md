@@ -4,8 +4,10 @@
 
 ClipBridge moves text between the Windows clipboard and the iOS clipboard (via Apple
 Shortcuts) over your own Wi-Fi: long AI prompts, log excerpts, code snippets, links,
-notes. Copy on one device, paste on the other. Nothing leaves your network, no account
-is required, and there is no third-party service in the middle.
+notes. Copy on one device, paste on the other. No account is required and there is no
+third-party service in the middle: in the default setup your clipboard traffic stays on
+your own LAN — see [Known issues](#known-issues) for the one documented exception
+around HTTP proxies.
 
 ```text
 Windows  Ctrl+C ──►  ClipBridge client ──► local Relay ──► SQLite
@@ -32,7 +34,8 @@ getting text from a phone to a PC. That means your prompts, logs and code pass t
 someone else's servers, get mixed into chat history, and often get truncated or
 reformatted. ClipBridge keeps the same workflow but keeps the data on your own devices:
 
-- **Local only** — the relay runs on your PC; traffic never leaves your LAN.
+- **Local by design** — the relay runs on your PC; with the default setup, traffic stays
+  on your LAN (see [Known issues](#known-issues) for the proxy caveat).
 - **Byte-exact** — Unicode, emoji, quotes, backslashes, tabs, CRLF and ~100 KB prompts
   survive the trip unchanged (up to 2 MiB per clip).
 - **Zero-config daily use** — double-click one exe; the relay is a managed child process.
@@ -100,7 +103,7 @@ Create two shortcuts in the built-in Shortcuts app. You need the **address** and
 
 1. **Text** — the relay address, e.g. `http://192.168.1.14:8787` (no trailing `/`)
 2. **Text** — the access token (the 43-character string only; no `Bearer ` prefix)
-3. **Text** — this device's id, e.g. `iphone` (letters/digits/`-`/`_`)
+3. **Text** — this device's id (you choose it, e.g. `iphone`; letters/digits/`-`/`_`)
 4. **Get Clipboard**
 5. **If** Clipboard has any value → **Get Contents of URL**:
    - Method **POST**, URL `[address]/api/v1/clips/shortcut`
@@ -113,8 +116,12 @@ Create two shortcuts in the built-in Shortcuts app. You need the **address** and
 
 1. **Text** — the relay address (same as above)
 2. **Text** — the access token
-3. **Text** — this device's id, e.g. `iphone`
-4. **URL** — `[address]/api/v1/clips?limit=10&exclude_device_id=iphone`
+3. **Text** — this device's id (you choose it, e.g. `iphone`; letters/digits/`-`/`_`,
+   up to 64 — no registration needed: the relay keeps no per-device state)
+4. **URL** — `[address]/api/v1/clips?limit=10&exclude_device_id=<your-device-id>` —
+   **use the exact same value as step 3**: if you named this device `iphone`, this is
+   literally `exclude_device_id=iphone`; otherwise substitute your own id. The relay
+   clamps `limit` to 1–200 (default 50).
 5. **Get Contents of URL** (GET) — header `Authorization` = `Bearer ` + token variable
 6. **Get Dictionary from Input** → **Get Value for Key** `clips`
 7. **If** `clips` has any value → **Get Item from List** (first item) →
@@ -124,7 +131,12 @@ Create two shortcuts in the built-in Shortcuts app. You need the **address** and
 9. Add both shortcuts to the Home Screen or Action button.
 
 > The `exclude_device_id` filter is what prevents you from copying back the text you just
-> sent. A detailed step-by-step guide with screenshots-style examples lives in
+> sent: the relay returns the newest clip whose sender id differs from the value you pass,
+> so it must repeat the id set in step 3. The list endpoint used here answers an empty
+> history with `200` and an empty `clips` list; the alternative `GET …/clips/latest`
+> answers `404 not_found` when empty, which Shortcuts shows as a fetch error — that is
+> the normal empty state (see Troubleshooting). A detailed step-by-step guide with
+> screenshots-style examples lives in
 > [shortcuts/SEND_TO_CLIPBRIDGE.md](shortcuts/SEND_TO_CLIPBRIDGE.md) and
 > [shortcuts/GET_FROM_CLIPBRIDGE.md](shortcuts/GET_FROM_CLIPBRIDGE.md) (Chinese, English
 > translation in progress).
@@ -200,7 +212,8 @@ The full threat model and rationale live in [docs/SECURITY.md](docs/SECURITY.md)
 short version:
 
 - **No cloud, no telemetry, no accounts.** The only network peer is the relay running on
-  your own PC. Traffic stays on your LAN.
+  your own PC — in the default setup, traffic stays inside your LAN (the HTTP-proxy
+  scenario in [Known issues](#known-issues) is the documented exception).
 - **Authentication.** Every API call carries a 256-bit random bearer token (generated
   per install), compared in constant time. Without the token, an attacker on the LAN can
   do nothing but see that the port is open.
@@ -295,17 +308,18 @@ Prerequisites: **.NET 8 SDK** and **Python 3.12+** (3.13 tested). Windows PowerS
 is the tested shell for the scripts.
 
 ```powershell
-# 1. Relay (dev run, loopback only)
+# 1. Relay (dev run, loopback only) — start from the repo root
 cd services\relay
 python -m venv .venv
 .\.venv\Scripts\pip install -r requirements.txt
 Copy-Item .env.example .env          # set CLIPBRIDGE_TOKEN (required, fail-fast)
 .\.venv\Scripts\python run.py        # http://127.0.0.1:8787 (Swagger at /docs)
+cd ..\..                             # back to the repo root
 
-# 2. Windows client (dev run)
+# 2. Windows client (dev run) — from the repo root
 dotnet run --project apps\windows\src\ClipBridge.Win
 
-# 3. Release artifact (self-contained client + PyInstaller relay + README)
+# 3. Release artifact (self-contained client + PyInstaller relay + README) — from the repo root
 powershell -ExecutionPolicy Bypass -File scripts\build-daily.ps1 -OutputDir artifacts\ClipBridge
 ```
 
@@ -317,7 +331,9 @@ overrides (`CLIPBRIDGE_HOME`, …) are documented in [docs/DEVELOPMENT.md](docs/
 
 ```powershell
 # Relay unit/integration tests (pytest)
-cd services\relay && .\.venv\Scripts\python -m pytest && cd ..\..
+cd services\relay
+.\.venv\Scripts\python -m pytest
+cd ..\..
 
 # Windows core tests (xunit)
 dotnet test apps\windows\tests\ClipBridge.Core.Tests
