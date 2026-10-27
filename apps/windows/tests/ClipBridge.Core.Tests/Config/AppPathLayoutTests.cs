@@ -40,7 +40,7 @@ public class AppPathLayoutTests
 
         Assert.NotEqual(alice.ConfigDir, bob.ConfigDir);
         Assert.DoesNotContain("alice", bob.ConfigDir, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("devuser", alice.ConfigDir, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("bob", alice.ConfigDir, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

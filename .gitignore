@@ -42,3 +42,6 @@ artifacts/
 *.swp
 Thumbs.db
 Desktop.ini
+
+# --- Python tooling caches ---
+.pytest_cache/

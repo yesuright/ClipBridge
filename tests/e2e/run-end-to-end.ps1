@@ -92,7 +92,7 @@ function MakeClipBody([string]$content, [string]$deviceId, [string]$createdAt = 
 Write-Host "=== ClipBridge Milestone 2 E2E ===" -ForegroundColor Cyan
 if (-not (Test-Path $ProjectDir)) { Write-Host "Project dir missing: $ProjectDir"; exit 1 }
 
-# Prefer the user-installed SDK (this machine: C:\Users\devuser\.dotnet), then PATH.
+# Prefer the user-installed SDK (e.g. %USERPROFILE%\.dotnet\dotnet.exe), then PATH.
 $dotnet = $null
 if (Test-Path "$env:USERPROFILE\.dotnet\dotnet.exe") { $dotnet = "$env:USERPROFILE\.dotnet\dotnet.exe" }
 if (-not $dotnet) { $dotnet = (Get-Command dotnet -ErrorAction SilentlyContinue).Source }

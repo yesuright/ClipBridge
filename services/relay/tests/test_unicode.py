@@ -20,7 +20,7 @@ AI_PROMPT_BLOCK = '''你好，请帮我审查下面这段代码。
 1. 支持超长文本同步
 2. 不依赖微信 \r\n
 3. "双引号" 和 '单引号' 都要保留
-4. 反斜杠：C:\\Users\\devuser\\Documents\\ClipBridge
+4. 反斜杠：C:\\Users\\dev-name\\Documents\\ClipBridge
 5. Tab 分隔：列A\t列B\t列C
 
 ```python
