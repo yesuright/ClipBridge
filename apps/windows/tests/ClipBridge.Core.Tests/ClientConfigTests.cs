@@ -3,6 +3,7 @@ using Xunit;
 
 namespace ClipBridge.Core.Tests;
 
+[Collection("ClipBridge environment")]
 public class ClientConfigTests : IDisposable
 {
     private static readonly string[] EnvVars =

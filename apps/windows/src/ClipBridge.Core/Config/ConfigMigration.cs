@@ -1,48 +1,66 @@
-using System.Text.Json;
-
 namespace ClipBridge.Core.Config;
 
 /// <summary>
-/// Migrations from the Milestone 2 layout into the daily-use layout.
+/// Optional import of a Milestone 2 relay `.env` token.
 ///
-/// What changed in M3:
-/// - The client config keeps its M2 location (%APPDATA%\ClipBridge\config.json) and keys —
-///   an existing M2 config is already fully valid, no rewrite, no token rotation.
-/// - The relay is now managed by the tray app (M3). In the old layout the relay token lived
-///   in services\relay\.env; if a user had configured ONLY the relay .env (no client config),
-///   this migration copies that token into the client config so the daily app "just works".
-///   The token is never printed or logged.
-/// - Logs/DB move to %LOCALAPPDATA%\ClipBridge (machine-local). Nothing to migrate: the M2
-///   relay DB is kept where it is; the daily app starts its own store (history is best-effort,
-///   the protocol treats it as a cache-like rolling buffer).
+/// Scope is deliberately narrow: the import only happens when the running binary sits
+/// inside a real ClipBridge source checkout (a directory that has both
+/// services/relay/.env and the Windows project or .git). A build handed to another person
+/// is never inside a checkout, so it can never inherit a developer token from a folder
+/// that happens to be nearby. Anything else gets a freshly generated token instead.
 /// </summary>
 public static class ConfigMigration
 {
-    /// <summary>
-    /// Best-effort discovery of the legacy relay .env (repo checkout), walking up from the
-    /// app base directory and the current directory. Returns null when not found.
-    /// </summary>
-    public static string? FindLegacyRelayEnv()
+    private const int MaxWalkUp = 6;
+
+    /// <summary>Finds the legacy relay .env of the checkout containing the app, if any.</summary>
+    public static string? FindLegacyRelayEnv(string? startDirectory = null)
     {
-        foreach (var start in new[] { AppContext.BaseDirectory, Environment.CurrentDirectory })
+        var start = startDirectory ?? AppContext.BaseDirectory;
+        DirectoryInfo? dir;
+        try
         {
-            var dir = new DirectoryInfo(start);
-            for (var i = 0; i < 6 && dir is not null; i++)
+            dir = new DirectoryInfo(Path.GetFullPath(start));
+        }
+        catch
+        {
+            return null;
+        }
+
+        // Only a developer build (running out of apps\windows\...) may inherit a relay .env.
+        // A packaged artifact is never there, so shipping ClipBridge inside a folder that
+        // happens to contain somebody's checkout cannot leak that person's token.
+        if (!IsDevLayout(dir.FullName))
+        {
+            return null;
+        }
+
+        for (var i = 0; i < MaxWalkUp && dir is not null; i++)
+        {
+            if (IsCheckoutRoot(dir.FullName))
             {
-                var candidate = Path.Combine(dir.FullName, "services", "relay", ".env");
-                if (File.Exists(candidate))
-                {
-                    return candidate;
-                }
-                dir = dir.Parent;
+                return Path.Combine(dir.FullName, "services", "relay", ".env");
             }
+            dir = dir.Parent;
         }
         return null;
     }
 
-    /// <summary>
-    /// Reads CLIPBRIDGE_TOKEN from a legacy relay .env (never logs it).
-    /// </summary>
+    private static bool IsDevLayout(string directory)
+        => directory.Replace('/', '\\')
+            .Contains(@"\apps\windows\", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsCheckoutRoot(string directory)
+    {
+        if (!File.Exists(Path.Combine(directory, "services", "relay", ".env")))
+        {
+            return false;
+        }
+        return Directory.Exists(Path.Combine(directory, ".git"))
+            || File.Exists(Path.Combine(directory, "apps", "windows", "src", "ClipBridge.Win", "ClipBridge.Win.csproj"));
+    }
+
+    /// <summary>Reads CLIPBRIDGE_TOKEN from a legacy relay .env (never logs it).</summary>
     public static string? ReadLegacyToken(string envPath)
     {
         try
@@ -64,33 +82,36 @@ public static class ConfigMigration
         return null;
     }
 
+    /// <summary>Locates a legacy token without writing anything.</summary>
+    public static bool TryReadLegacyToken(out string? token, out string? envPath, string? startDirectory = null)
+    {
+        token = null;
+        envPath = FindLegacyRelayEnv(startDirectory);
+        if (envPath is null)
+        {
+            return false;
+        }
+        token = ReadLegacyToken(envPath);
+        return token is not null;
+    }
+
     /// <summary>
-    /// When no client config exists yet, seed one from the legacy relay .env token so the
-    /// daily build can start without requiring the user to re-enter anything.
-    /// Returns true when a config file was written.
+    /// Legacy entry point (Milestone 3): seed a config from the checkout's relay .env.
+    /// Kept for compatibility; new code goes through <see cref="ConfigBootstrap"/>.
     /// </summary>
     public static bool TryMigrateFromLegacyEnv(string? configPath = null)
     {
         var path = configPath ?? AppPaths.ConfigFile;
         if (File.Exists(path))
         {
-            return false; // an existing config wins; never touch a configured token
+            return false; // an existing config always wins; never touch a configured token
         }
-        var envPath = FindLegacyRelayEnv();
-        if (envPath is null)
-        {
-            return false;
-        }
-        var token = ReadLegacyToken(envPath);
-        if (token is null)
+        if (!TryReadLegacyToken(out var token, out _) || token is null)
         {
             return false;
         }
 
-        var config = new ClientConfig { DeviceToken = token };
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(path, json);
+        ConfigStore.Write(new ClientConfig { DeviceToken = token }, path);
         return true;
     }
 }

@@ -1,26 +1,33 @@
 namespace ClipBridge.Core.Config;
 
 /// <summary>
-/// Well-known ClipBridge locations, following Windows conventions:
-/// - Settings (roaming): %APPDATA%\ClipBridge\config.json — same file as Milestone 2
-///   (source compatibility: an existing M2 config is read as-is, no migration needed).
-/// - Machine-local runtime data (logs, database): %LOCALAPPDATA%\ClipBridge\
-///   Logs and the SQLite database are regenerable/big — they must not roam.
-/// - Secrets live in config.json (same OS-account trust as before; never in the repo).
+/// Process-wide ClipBridge locations. The actual layout is resolved once from
+/// <see cref="AppPathLayout.FromEnvironment"/> (standard Windows per-user folders, or an
+/// explicit override) so every component — config, logs, database, relay launch — agrees.
+///
+/// No path here is derived from the install directory, the developer account, or the
+/// current working directory.
 /// </summary>
 public static class AppPaths
 {
-    public static string ConfigDir { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ClipBridge");
+    private static AppPathLayout _current = AppPathLayout.FromEnvironment();
 
-    public static string ConfigFile { get; } = Path.Combine(ConfigDir, "config.json");
+    /// <summary>Active layout. Settable for tests/hosts that resolve it explicitly.</summary>
+    public static AppPathLayout Current
+    {
+        get => _current;
+        set => _current = value ?? throw new ArgumentNullException(nameof(value));
+    }
 
-    public static string DataDir { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClipBridge");
+    public static string ConfigDir => Current.ConfigDir;
 
-    public static string LogsDir { get; } = Path.Combine(DataDir, "logs");
+    public static string ConfigFile => Current.ConfigFile;
 
-    public static string DatabaseFile { get; } = Path.Combine(DataDir, "clipbridge.db");
+    public static string DataDir => Current.DataDir;
+
+    public static string LogsDir => Current.LogsDir;
+
+    public static string DatabaseFile => Current.DatabaseFile;
 
     /// <summary>Creates all runtime directories (idempotent).</summary>
     public static void EnsureDirectories()
