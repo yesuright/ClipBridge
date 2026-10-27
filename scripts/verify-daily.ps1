@@ -1,4 +1,4 @@
-# Daily-use artifact integration smoke test (Milestone 4).
+﻿# Daily-use artifact integration smoke test (Milestone 4).
 # Launches artifacts\ClipBridge\ClipBridge.exe and verifies the whole product lifecycle:
 #   - no-console build (PE subsystem = GUI)
 #   - relay auto-starts as a child and listens on 0.0.0.0:VERIFY_PORT
