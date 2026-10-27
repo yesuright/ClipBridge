@@ -1,199 +1,188 @@
-# ClipBridge 真机手测指南 — iPhone / iPad Shortcuts (Milestone 3)
+# ClipBridge 真机验收指南 — iPhone / iPad（Apple Shortcuts）
 
-> 目标：同一可信 LAN/Wi-Fi 下，iPhone 和 iPad 用 Apple 自带 Shortcuts 完成
-> **真实双向纯文本同步**。本指南让「拿着 iPhone 的人」一步步就能做完。
+> 目标：在同一可信 Wi-Fi/局域网内，用 iPhone/iPad 系统自带的「快捷指令（Shortcuts）」App，
+> 完成 Windows ↔ iPhone 的**双向纯文本剪贴板同步**验收。本指南面向第一次接触 ClipBridge 的用户。
 >
-> Milestone 3 变化：Windows 侧已产品化（daily artifact、自动 relay、单实例、稳定地址
-> hostname `clipbridge.local`）。已通过的方式（IP URL）依旧 100% 兼容；
-> **升级路径** = 把 Shortcut 里的 URL 从 `http://192.168.x.x:8787` 换成
-> `http://clipbridge.local:8787` 之后做一次下述 T1/T2 验证（若该地址在手机上不通，
-> 回退用 IP 地址即可，见 §10）。
->
-> 状态约定：以下 M3 真机重测步骤全部完成后，项目才能从
-> `IPHONE REGRESSION TEST: READY_FOR_DEVICE_RETEST` 升级为 `PASS`。
+> 所有连接参数（地址、端口、Token）以 **Windows 端首次启动时弹出的 *Connect your iPhone*
+> 窗口**为准——窗口显示什么就填什么，不需要手工生成或查找任何 Token。
 
 ---
 
 ## 0. 一分钟速览
 
-| 操作 | 用户动作 | 预期 |
+| 方向 | 你做什么 | 预期 |
 | --- | --- | --- |
-| Windows → iPhone | 复制文本；iPhone 点 **Get from ClipBridge** | 文本进入 iPhone 剪贴板 → 任意 App 粘贴 |
-| iPhone → Windows | 复制文本；点 **Send to ClipBridge** | 几秒内 Windows 剪贴板 = 该文本 → `Ctrl+V` |
-| iPad | 同上，两个 Shortcut 中 `My Device ID` 改成 `ipad` | 同上 |
+| Windows → iPhone | Windows 复制文本 → iPhone 点 **Get from ClipBridge** | 文本进入 iPhone 剪贴板，任意 App 可粘贴 |
+| iPhone → Windows | iPhone 复制文本 → 点 **Send to ClipBridge** | 几秒内 Windows 剪贴板变为该文本，`Ctrl+V` 可粘贴 |
+| iPad | 与 iPhone 完全相同，仅设备 ID 改为 `ipad` | 同上 |
 
 ---
 
-## 1. Prerequisites（前置条件）
+## 1. 前置条件
 
-- [ ] 一台 Windows PC（运行本仓库），一台 iPhone、一台 iPad，**连接同一个可信 Wi-Fi**
-      （同一个路由器，同一网段；手机开热点给 PC 不算同一网段）
-- [ ] Relay 与 Windows 客户端正在运行。**一条命令**（在 Windows 上，PowerShell）：
+- [ ] 一台 Windows PC（10/11，64 位）与一台 iPhone 或 iPad，连接**同一个可信 Wi-Fi**
+      （同一路由器、同一网段；手机开热点给 PC 不算同一网段）。
+- [ ] Windows 网络配置文件为**专用（Private）**：设置 → 网络和 Internet → Wi-Fi → 属性 →
+      「专用」。公用网络配置下防火墙会拦截入站连接。
+- [ ] 已获得 ClipBridge 程序目录（内含 `ClipBridge.exe` 与 `relay\` 子目录）：
+      若 GitHub Releases 已提供发布包，下载并**完整解压**到任意目录（路径可含空格，无需安装）；
+      若尚未发布，按 [README](../README.md) 的「Building from source」自行构建，产物结构相同。
+- [ ] 首次入站连接时 Windows 防火墙可能弹窗：选择**允许（仅专用网络）**。
+      ClipBridge 永远不会替你修改防火墙、VPN 或代理设置。
 
-      powershell -ExecutionPolicy Bypass -File scripts\start-lan-dev.ps1
+## 2. 启动并获取连接参数（Windows，一次性）
 
-      该脚本会启动 relay（LAN 模式，绑定 0.0.0.0）+ Windows 客户端，
-      并打印建议的 LAN URL 与安全提示。用 `Ctrl+C` 结束两者。
+1. 双击 **`ClipBridge.exe`**——它会自动拉起 relay 子进程与托盘应用。
+2. 首次启动自动完成全部配置：生成 256-bit 随机访问 Token（43 字符）与设备 ID，
+   并弹出 **Connect your iPhone** 窗口。记下窗口里的三项：
+   - **地址**：`http://<PC 局域网 IPv4>:<端口>`，例如 `http://192.168.1.20:8787`
+     （结尾不加 `/`；PC 的 IP 变化后此地址需要更新，Token 不变）
+   - **Token**：43 字符字符串本身（Show / Copy 按钮；拼请求头时再加 `Bearer ` 前缀；
+     不要发到聊天、截图或粘贴进任何文件）
+   - **设备 ID**：自定，如 `iphone`。规则：字母或数字开头，仅字母/数字/`-`/`_`，1–64 字符，
+     无需注册——**Send 与 Get 两个快捷指令必须填同一个值**
+3. 随时重开窗口：托盘图标 → **Connection setup…**；Home 页 → *Copy address* 可直接复制地址。
+4. 端口说明：默认 **8787**；被其他程序占用时会自动换到下一个空闲端口并持久化、托盘提示——
+   此时两个快捷指令里的端口要一起更新（Token 不受影响）。
+5. 程序目录整体移动不影响任何参数：配置与 Token 存于 `%APPDATA%\ClipBridge`，与安装位置无关。
 
-- [ ] Windows 网络配置文件是 **“专用/Private”**（不是“公用/Public”）。
-      检查：设置 → 网络和 Internet → Wi-Fi → 属性 → “公用/专用”。
-      只有专用配置下，手动添加的入站防火墙规则才会生效（见 §8）。
+> mDNS 说明：客户端可在局域网内应答 `clipbridge.local`，但该特性为**实验性**
+> （部分 iPhone 无法解析，见 README「Known issues」#3）。请以窗口显示的 **IP 地址**为准。
 
-## 2. 找到 Relay URL（在 Windows 上执行）
+## 3. iPhone 快捷指令 1 — Send to ClipBridge（iPhone → Windows）
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\show-lan-setup.ps1
-```
+打开「快捷指令」App → ＋ 新建，依次添加动作：
 
-- 脚本会列出候选地址，例如 `http://192.168.1.123:8787`（接口名 WLAN/Ethernet）。
-- 如果列出多个，选当前连着的那个网卡（设置 → 网络和 Internet 里能看到）。
-- 脚本同时（只读地）检查：端口是否正在监听、监听的是不是 `127.0.0.1`、
-  防火墙是否可能拦截，以及需要时打印**手动**防火墙步骤——脚本本身不做任何修改。
-- 也可以手查：`ipconfig`，找一个 `192.168.x.x` / `10.x.x.x` / `172.16-31.x.x`
-  的**物理网卡**地址（VPN 和虚拟网卡不要用）。
+1. **文本 (Text)** — 内容：`<Relay地址>`（如 `http://192.168.1.20:8787`，结尾无 `/`）
+2. **文本 (Text)** — 内容：`<Token>`（只填 43 字符本身，不要带 `Bearer `）
+3. **文本 (Text)** — 内容：`<设备ID>`（如 `iphone`）
+4. **获取剪贴板 (Get Clipboard)**
+5. **如果 (If)**：剪贴板有任何值 → **获取 URL 内容 (Get Contents of URL)**：
+   - 方法 **POST**；URL：`[Text1]/api/v1/clips/shortcut`（在 URL 字段插入第 1 步变量）
+   - 请求头：`Authorization` = `Bearer ` + 第 2 步变量；`Content-Type` = `application/json`
+   - 请求体：选 **JSON**，用**字典编辑器**添加两项：
+     `device_id` ← 第 3 步变量；`content` ← **剪贴板**变量
+     （**不要**手写 JSON 字符串——引号/换行/emoji 会被转义弄坏）
+   - **否则** → 通知：「剪贴板为空」
+6. （可选）**从输入获取词典** → **获取词典值** `size_bytes` → 通知 `Sent <size> bytes`
+7. 重命名为 `Send to ClipBridge`，添加到主屏幕。
 
-记下 Relay URL，例如：`http://192.168.1.123:8787`
+成功时服务端返回 `201`，并自动生成 `clip_id` / 时间戳 / 内容哈希——快捷指令不需要自己计算。
 
-> **稳定地址（推荐，Milestone 3）**：Windows 客户端运行时会在局域网内应答
-> `clipbridge.local`。iPhone Safari 打开 `http://clipbridge.local:8787/api/v1/health`
-> 若能显示 `{"status":"ok",...}`，就可以把 Shortcut 里的 URL 固定为
-> `http://clipbridge.local:8787` —— **以后 PC 的 IP 变了也不用改**。
-> 手机打不通就用 IP（本页第 2 步）；PC 端托盘菜单里的 “LAN:” 行随时可看当前 IP/复制。
+## 4. iPhone 快捷指令 2 — Get from ClipBridge（Windows → iPhone）
 
-## 3. 准备 Bearer Token（在 Windows 上）
+1. **文本 (Text)** — `<Relay地址>`（同上）
+2. **文本 (Text)** — `<Token>`
+3. **文本 (Text)** — `<设备ID>`（**必须与快捷指令 1 第 3 步完全一致**）
+4. **URL** — `[Text1]/api/v1/clips?limit=10&exclude_device_id=[Text3]`
+   （服务端把 `limit` 钳制在 1–200，默认 50）
+5. **获取 URL 内容 (Get Contents of URL)** — GET，请求头只加：
+   `Authorization` = `Bearer ` + 第 2 步变量
+6. **从输入获取词典** → **获取词典值** `clips`（响应形如 `{"count":N,"clips":[…]}`）
+7. **如果** clips 有任何值 → **从列表获取项**（第 1 项）→ **获取词典值** `content` →
+   **拷贝到剪贴板**；**否则** → 通知：「暂无来自其他设备的新内容」
+8. （可选）用返回的 `size_bytes` / `device_id` 做通知
+9. 重命名为 `Get from ClipBridge`，添加到主屏幕（或操作按钮）。
 
-1. 打开 `services\relay\.env`（记事本），找到你自己设置的 `CLIPBRIDGE_TOKEN`。
-2. 如果你丢了 / 刚创建：
-   ```powershell
-   python -c "import secrets; print(secrets.token_hex(32))"
-   ```
-   然后把结果写进 `services\relay\.env` 并重启 relay。
-3. 把该 token 记下来（只在下面配置 Shortcut 时输入一次）。
-   **不要在聊天里发、不要截图、不要发给本指南以外的任何人。**
+> 端点说明：`exclude_device_id` 的语义是「返回发送者 ID ≠ 该值的最新内容」，
+> 用来避免取回自己刚发出的文本——因此它必须与本快捷指令第 3 步的设备 ID 一致。
+> 另有一个极简 4 动作变体 `GET /api/v1/clips/latest?exclude_device_id=<设备ID>`，
+> 但在没有其他设备内容时它会返回 `404 not_found`（快捷指令显示为获取失败，属正常空态）；
+> 推荐使用上面的列表版。
 
-> start-lan-dev.ps1 / show-lan-setup.ps1 / relay 日志都**不会**打印 token。
+图文版步骤：[shortcuts/SEND_TO_CLIPBRIDGE.md](../shortcuts/SEND_TO_CLIPBRIDGE.md) 与
+[shortcuts/GET_FROM_CLIPBRIDGE.md](../shortcuts/GET_FROM_CLIPBRIDGE.md)。
 
-## 4. 配置 iPhone：Send to ClipBridge
+## 5. iPad
 
-打开 **Shortcuts** App → ＋ 新建 Shortcut。依次添加：
+与 iPhone 完全相同，只改一处：两个快捷指令里的设备 ID 用 `ipad`
+（Get 的 `exclude_device_id=` 同步改为 `ipad`）。
 
-1. **Text** — 计划文本，内容 `http://192.168.1.123:8787`
-   （第 2 步拿到的 Relay URL，结尾不要 `/`）
-2. **Text** — 内容 `Bearer <你的 CLIPBRIDGE_TOKEN>` 里**不要带 Bearer**，
-   只放 token 本身（后面拼 Header 时再加 `Bearer `）→ 实际：
-   - Text 内容 = token 字符串
-3. **Text** — 内容 `iphone`
-4. **Get Clipboard**（获取剪贴板）
-5. **If** (Clipboard) 有值 — 否则 **Notification** “Clipboard is empty”
-6. **Get Contents of URL**（获取 URL 内容）：
-   - Method：**POST**
-   - URL：`[Text1]/api/v1/clips/shortcut`（在 URL 字段里插入第 1 个 Text 变量）
-   - Headers：
-     - `Authorization` = `Bearer ` +（插入第 2 个 Text 变量）
-     - `Content-Type` = `application/json`
-   - 展开 **Request Body**：选 **JSON**，字典加两项：
-     - `device_id` ← 插入第 3 个 Text 变量（“iphone”）
-     - `content` ← 插入 **Clipboard** 变量
-   - **不要**手写 JSON 字符串；用字典输入才能保证换行/引号/emoji 原样发送
-7. （可选）**Get Dictionary from Input** → **Get Value for Key** `size_bytes` →
-   **Notification** `Sent <size> bytes`
-8. 重命名 Shortcut 为 `Send to ClipBridge`，添加到主屏幕。
+## 6. 验收用例
 
-## 5. 配置 iPhone：Get from ClipBridge
+### T0 连通性预检（先做这个）
 
-1. **Text** — `http://192.168.1.123:8787`（同第 4 步）
-2. **Text** — token
-3. **Text** — `iphone`
-4. **URL** — `[Text1]/api/v1/clips/latest?exclude_device_id=[Text3]`
-5. **Get Contents of URL** — GET，Headers 只加：
-   `Authorization` = `Bearer ` +（Text2）
-6. **Get Dictionary from Input** → **Get Value for Key** `content`
-7. **Copy to Clipboard**（复制到剪贴板）
-8. （可选）Notification：`Copied from <device_id>`（取返回的 `device_id` 字段）
-9. 重命名 `Get from ClipBridge`，添加到主屏幕。
-
-> 说明：没有“其他设备的内容”时本版会报 `not_found` 错误并停止——这是**正常空状态**
-> （意思：“没有任何非你设备的新文本”）。想看到优雅提示，改用
-> `.../api/v1/clips?limit=10&exclude_device_id=[Text3]` 并在“If (clips) 有值”
-> 分支里取第 1 条的 `content`（见 `shortcuts/GET_FROM_CLIPBRIDGE.md`）。
-
-## 6. 配置 iPad（和 iPhone 的区别只有 device ID）
-
-按 §4、§5 在 iPad 上各建一个同款 Shortcut，**只改一处**：
-
-| 字段 | iPhone | iPad |
-| --- | --- | --- |
-| Send 里的 Text3（我的设备 ID） | `iphone` | `ipad` |
-| Get 里的 URL 的 `exclude_device_id=` | `iphone` | `ipad` |
-| Relay URL 与 Token | 相同 | 相同 |
-
-> device ID 可自定义（如 `tony-iphone`），但必须在**所有设备**上各自一致或唯一，
-> 且只含 `[A-Za-z0-9_-]`、字母数字开头。
-
-## 7. 测试
+iPhone Safari 打开 `http://<PC IP>:<端口>/api/v1/health` → 应显示 `{"status":"ok",...}`。
+此端点无需 Token。打不开按 §7 排查（同一 Wi-Fi → 防火墙 → AP 隔离）。
 
 ### T1 Windows → iPhone
 
 1. Windows 复制一段文本（例如 `Hello from Windows`）
-2. iPhone 点 **Get from ClipBridge**
-3. 打开备忘录 / 任意文本框 → 粘贴
-4. 预期：原文完整出现（含换行/表情/Markdown/代码，一个字符不多不少）
-5. 跨设备核对：Windows 再复制一段中文 + emoji + 多行，再点一次 Get，粘贴应为新内容
+2. iPhone 点 **Get from ClipBridge** → 打开备忘录粘贴
+3. 预期：原文完整出现（换行/表情/Markdown/代码，一个字符不多不少）
+4. Windows 再复制一段「中文 + emoji + 多行」，重复 Get → 粘贴应为**新**内容
 
 ### T2 iPhone → Windows
 
-1. iPhone 任意 App 复制文本
-2. 点 **Send to ClipBridge**，看到成功通知
-3. 几秒内 Windows 托盘客户端自动写入剪贴板；`Ctrl+V` → 得到原文（保留所有换行）
+1. iPhone 任意 App 复制文本 → 点 **Send to ClipBridge**（看到成功反馈）
+2. 几秒内（默认 2 秒轮询）Windows `Ctrl+V` 得到原文，所有换行原样保留
 
-### T3 iPad
+### T4 防循环验证
 
-重复 T1 / T2（iPad 的 Shortcut，`ipad` 身份），预期同上。
+1. 完成 T2 后等约 10 秒
+2. Windows 剪贴板内容**保持不变**——客户端没有把刚应用的内容再上传回去
+   （四层防循环：30 秒同哈希忽略、900 秒本设备排除、15 秒服务端去重、clip_id 幂等）
 
-### T4 循环（loop）验证
+### T5 长文本
 
-1. 从 iPhone 发送一段文本后，Windows 剪贴板出现该文本
-2. 等 10 秒左右，确认 Windows 托盘客户端**没有**把该文本再“发出去”
-   （可在 Windows 上 `Get-Clipboard` 再次粘贴，内容应保持不变；更严格的对照见
-   `tests/e2e/run-end-to-end.ps1` 的自动版本）
+准备 ≥100 KB 的文本（单条上限 2 MiB）：
 
-### T5 长 prompt 测试
+1. Windows 复制 → iPhone 点 Get → 粘贴完整
+2. iPhone 复制 → 点 Send → Windows 粘贴后与原文逐字节比对
+   （PowerShell：把原文与取回文本分别放入 `$text` / `$got`，`$text.Equals($got)` 应为 True）
 
-iOS 备忘录里拿一段 ≥100 KB 的文本（例如你常用的 AI prompt 或一篇 Markdown）：
+### T6 断网恢复
 
-1. iPad 复制 → Send to ClipBridge → Windows `Ctrl+V`，逐字节一致（建议用
-   `git diff` 或 PowerShell 比对哈希：`Get-FileHash` 不行——用
-   `(Set-Clipboard ...); Get-Clipboard` 前后对比 `$text.Equals($got)`）
-2. Windows 复制 100 KB 长文本 → iPhone 点 Get → 粘贴完整
+1. iPhone 关闭 Wi-Fi → 点 Get / Send 失败，属预期
+2. 重新打开 Wi-Fi → 同步自动恢复（客户端自愈，通常 1–5 分钟内；也可在 Windows 托盘 →
+   *Restart relay* 立即重试）→ 重复 T1 或 T2 应成功
 
-## 8. Troubleshooting（都是只读 + 手动步骤；ClipBridge 永远不会替你改系统安全设置）
+**非故障判定**：Send 返回 **409** = 15 秒内同设备重发相同内容（去重窗口），视为已发出；
+Get 的 `latest` 变体返回 **404 not_found** = 正常空态；**413** = 超过 2 MiB，请拆分发送。
+
+## 7. Troubleshooting（均为只读 + 手动步骤；ClipBridge 永远不会替你改系统安全设置）
 
 | 现象 | 排查 |
 | --- | --- |
-| iPhone Safari 打开 `http://<PC-IP>:8787/api/v1/health` **打不开 / 转圈** | ① iPhone 是否连的同一个 Wi-Fi；② PC 的 IP 是否变了（重启/换网可能变——重新跑 `show-lan-setup.ps1`）；③ 手机 4G/5G 关了没 |
-| **connection refused** | relay 没在跑，或绑定的不是 0.0.0.0：看 relay 启动输出；用 `start-lan-dev.ps1` 启动 |
-| **timeout**（能上别的网站，就是连不到 PC） | Windows 防火墙入站拦截。**手动**（管理员 PowerShell）：`New-NetFirewallRule -DisplayName "ClipBridge relay" -Direction Inbound -Protocol TCP -LocalPort 8787 -Action Allow -Profile Private`；并确认网络配置文件为 **专用**。做完后从 iPhone 重试 |
-| **401 Unauthorized** | Shortcut 里的 token 与 relay `.env` 不一致；或 token 复制时带了空格/换行 |
-| **404 not_found**（Get 时） | 正常空状态：没有“其他设备”的内容。先在其他设备发一条再试 |
-| **409**（Send 时） | 15 秒内同一设备发过相同内容（去重窗口，防循环）——视为已发出，不是故障 |
-| **413** | 超过 2 MiB：短一些再发 |
-| 错拿 **VPN 网卡 IP** | `show-lan-setup.ps1` 已排除 VPN/虚拟网卡；若手工 `ipconfig` 请选物理网卡（WLAN/Ethernet）地址 |
-| iPhone **不在同一 Wi-Fi** | 检查两台设备的网络名；手机热点 ≠ 同一网段 |
-| Windows 网络配置文件是“**公用**” | 设置 → 网络和 Internet → 属性 → 切到“专用”，否则防火墙规则/私有网络行为会拦截 |
-| PC 有 **多网卡** | 用 `show-lan-setup.ps1` 列出的候选；或临时禁用不用的网卡后在 Shortcut 里改用对应 IP |
+| T0 / health **打不开或转圈** | ① iPhone 与 PC 是否同一 Wi-Fi；② PC IP 是否变化（重开 *Connection setup…* 查看当前地址）；③ 手机蜂窝数据与 Wi-Fi 状态；④ 路由器 AP 隔离 |
+| **connection refused** | 程序没在运行：双击 `ClipBridge.exe`；看托盘状态；运行 `ClipBridge.exe --doctor`（只读诊断） |
+| **timeout**（手机能上其他网，连不到 PC） | Windows 防火墙入站拦截：首次弹窗选允许（仅专用网络）；或手动放行 `ClipBridgeRelay.exe`（仅专用网络）；确认网络配置文件为**专用** |
+| **401 Unauthorized** | Token 不一致，或复制时带了空格/换行：从 *Connection setup…* 重新复制 |
+| **404 not_found**（`latest` 变体） | 正常空态：没有"其他设备"的新内容，先发一条 |
+| **409**（Send 时） | 15 秒内同设备重发相同内容（防循环去重窗口），视为已发出，不是故障 |
+| **413** | 单条超过 2 MiB：拆分发送 |
+| 错拿 **VPN/虚拟网卡 IP** | 窗口地址由客户端自动选择物理网卡；多网卡环境可在 Settings 配置 `LanIpOverride`，或用 `ClipBridge.exe --doctor` 查看候选 |
+| Windows 网络配置文件是**公用** | 设置 → 网络和 Internet → 属性 → 切为专用 |
+| 同步一直 **Offline** | 等 1–5 分钟自愈；或托盘 → *Restart relay*；仍失败看日志 |
+| PC 从设置了 `HTTP_PROXY` 的 shell 启动后同步失败（`relay_404`） | 见 README「Known issues」#1：给该 shell 加 `NO_PROXY=localhost,127.0.0.1`，或改从资源管理器/开始菜单启动；ClipBridge 不修改任何代理设置 |
 
-### 日志（排查用，不泄露正文/token）
+### 日志（只含 id / 大小 / 哈希前缀，永不包含正文或 Token）
 
-- Relay：`services\relay\data\logs\relay.log`（只有 clip_id / device / size / hash 前缀）
-- 客户端：`%APPDATA%\ClipBridge\client.log`
-- 只读检查端口：`Get-NetTCPConnection -LocalPort 8787 -State Listen`
+- 客户端 + Relay：`%LOCALAPPDATA%\ClipBridge\logs\`
+- 只读检查端口监听：`Get-NetTCPConnection -LocalPort 8787 -State Listen`
+
+## 8. 常见变化场景
+
+- **移动安装目录**：程序目录可整体移动。Token 与配置存于 `%APPDATA%\ClipBridge`，
+  与安装位置无关——IP/端口不变的前提下，快捷指令无需改动。
+- **PC 的 IP 变了（DHCP 续租/换网）**：重新打开 *Connection setup…*，把两个快捷指令里的
+  地址更新为当前显示值；**Token 永远不变**。地址变化时托盘会提示。
+- **端口被占用**：自动换到下一空闲端口并持久化 + 托盘提示 → 两个快捷指令的端口同步更新。
+- **并行运行多份实例**（高级）：用 `CLIPBRIDGE_HOME` / `CLIPBRIDGE_INSTANCE_ID` /
+  `CLIPBRIDGE_RELAY_PORT` 等环境变量隔离，见 [DEVELOPMENT.md](DEVELOPMENT.md) 的环境变量表。
+
+## 9. 开发者等价自检（无需 iPhone）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\verify-daily.ps1 -Artifact artifacts\ClipBridge
+# 已覆盖：打包产物真实启动、relay 0.0.0.0 监听、单实例、剪贴板上传/接收、崩溃恢复、干净退出
+powershell -ExecutionPolicy Bypass -File tests\e2e\run-end-to-end.ps1
+# 已覆盖：iphone/ipad 简化端点 POST、exclude_device_id GET、Unicode、长文本、循环防御
+```
+
+真实设备验收以本指南的人工用例为准；自动化检查只是开发侧的等价物。
 
 ---
 
-## 9. 需要人工确认的自动化等价检查（无需 iPhone）
-
-```powershell
-powershell -ExecutionPolicy Bypass -File tests\e2e\run-end-to-end.ps1
-# 已包含：iphone/ipad 简化端点 POST、exclude_device_id GET、Unicode、长文本、循环防御
-powershell -ExecutionPolicy Bypass -File scripts\tests\test-lan-setup.ps1   # LAN 逻辑单测
-```
+相关文档：[README](../README.md) · [安全模型](SECURITY.md) · [日常使用](DAILY_USE.md) ·
+[已知问题](../README.md#known-issues)
