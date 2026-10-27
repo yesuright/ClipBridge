@@ -188,7 +188,8 @@ Closing the window only hides it — sync keeps running in the tray.
 ```
 
 - The **relay** is a local HTTP service (FastAPI + SQLite). It stores the latest clip and
-  the last 50 clips. Every `/api/v1/*` endpoint requires the shared bearer token.
+  the last 50 clips. Every `/api/v1/*` endpoint except `/api/v1/health` requires
+  the shared bearer token.
 - The **client** watches the Windows clipboard (event-driven), uploads new text, and polls
   for incoming text, filtering out its own uploads and anything it just applied.
 - The **shortcuts** call the same relay: `POST …/clips/shortcut` sends the phone clipboard;
@@ -263,7 +264,7 @@ Vulnerability reports: see [SECURITY.md](SECURITY.md).
      is the reserved fix (not implemented in this release).
 
 2. **Unsigned binaries** — SmartScreen/Defender may warn on first run. Expected until
-   code signing is in place (see the roadmap in the release notes).
+   code signing is in place (version history: [CHANGELOG.md](CHANGELOG.md)).
 
 3. **`clipbridge.local` (mDNS) is experimental** — some iPhones fail to resolve it.
    Use the plain IP address from *Connection setup…*; mDNS stays off the critical path.

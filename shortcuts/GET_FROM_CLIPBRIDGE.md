@@ -5,7 +5,7 @@
 
 ## 关键机制：`exclude_device_id`
 
-Milestone 2 的 relay 支持：
+relay 支持两种 GET 端点：
 
 ```
 GET /api/v1/clips/latest?exclude_device_id=iphone     ← 最新“非 iphone 自己”的文本
@@ -23,9 +23,9 @@ GET /api/v1/clips?limit=10&exclude_device_id=iphone   ← 最近 N 条“非 iph
 
 创建新 Shortcut，先加 3 个 **Text** 动作放最上面（只改这 3 处）：
 
-1. **Text** `Relay URL` = `http://192.168.1.123:8787`（以 `show-lan-setup.ps1` 显示为准，
+1. **Text** `Relay URL` = `http://<PC 局域网 IP>:<端口>`（以 Windows 端 *Connect your iPhone* 窗口显示为准，
    结尾不要 `/`）
-2. **Text** `Bearer Token` = 你的 `CLIPBRIDGE_TOKEN`（从 `services\relay\.env` 读取）
+2. **Text** `Bearer Token` = 你的 43 字符访问 Token（窗口内 Show/Copy）
 3. **Text** `My Device ID` = `iphone`（iPad 用 `ipad`）
 
 然后：

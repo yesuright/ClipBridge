@@ -45,7 +45,7 @@ ClipBridge 保留同样的使用习惯，但数据只在你的设备之间：
 - 路径可移植：配置在 `%APPDATA%\ClipBridge`，数据在 `%LOCALAPPDATA%\ClipBridge`；
   与安装位置、用户名、工作目录无关，含空格/中文的路径有测试覆盖。
 - 四层防循环，自己复制的内容不会被当成新片段回传。
-- 诊断工具：`ClipBridge.exe --doctor`（只读）、`--status`；日志永不包含剪贴板正文和 token。
+- 诊断工具：`ClipBridge.exe --doctor`（只读）、`--status`（JSON 状态行）；日志永不包含剪贴板正文和 token。
 
 **明确不支持（当前版本）**：图片、文件、富文本/HTML、二进制；公网部署；HTTPS；
 端到端加密；安装器；自动更新；代码签名；离线队列。详见
@@ -154,7 +154,7 @@ ClipBridge 保留同样的使用习惯，但数据只在你的设备之间：
 ```
 
 - **Relay** 是本机 HTTP 服务（FastAPI + SQLite），保存最新片段与最近 50 条历史；
-  所有 `/api/v1/*` 接口都要求共享 Bearer token。
+  除 `/api/v1/health` 外，所有 `/api/v1/*` 接口都要求共享 Bearer token。
 - **客户端**事件驱动地监听 Windows 剪贴板并上传，同时轮询接收、过滤自己上传/刚应用的内容。
 - **快捷指令**调用同一 Relay：`POST …/clips/shortcut` 发送，`GET …/clips?exclude_device_id=…`
   接收；Relay 负责 clip_id / 时间戳 / SHA-256（Shortcuts 无法原生计算）。
@@ -162,7 +162,7 @@ ClipBridge 保留同样的使用习惯，但数据只在你的设备之间：
   （900 秒记忆）；Relay 对同一设备 15 秒内完全相同内容返回 `409 duplicate_content_in_window`；
   clip_id 幂等（`409 duplicate_clip_id`）。
 
-协议细节：[docs/PROTOCOL.md](docs/PROTOCOL.md) · 架构：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+协议细节：[docs/PROTOCOL.md](docs/PROTOCOL.md) · 架构：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · 生命周期：[docs/LIFECYCLE.md](docs/LIFECYCLE.md)。
 
 ## 安全与隐私
 
@@ -172,6 +172,7 @@ ClipBridge 保留同样的使用习惯，但数据只在你的设备之间：
 - **认证**：所有 API 请求携带 256-bit 随机 token（每台安装各自生成），常数时间比较。
 - **传输是局域网明文 HTTP**：token 与剪贴板文本在传输中不加密。这是本版本公开声明的
   取舍——只用于可信的家庭/办公 Wi-Fi，不要在公共 Wi-Fi 使用，**不要在路由器做端口转发**。
+  HTTPS / VPN 隧道部署是后续里程碑的受支持配置变更。
 - **日志按设计与测试保证不含正文/token**：只有 id、大小、8 位哈希前缀和状态码。
 - **存储**：剪贴板文本在本机 SQLite（`%LOCALAPPDATA%\ClipBridge\clipbridge.db`），
   token 在 `%APPDATA%\ClipBridge\config.json`，均受你的 Windows 账户保护。
@@ -183,7 +184,7 @@ ClipBridge 保留同样的使用习惯，但数据只在你的设备之间：
 
 漏洞报告方式见 [SECURITY.md](SECURITY.md)。
 
-## Known Issues（已知问题）
+## Known Issues
 
 1. **特定 HTTP 代理环境可能劫持本机请求**（已知，修复决策待定）。
    如果某个 Windows 进程是从设置了 `HTTP_PROXY`/`HTTPS_PROXY`、且 `NO_PROXY` 未排除

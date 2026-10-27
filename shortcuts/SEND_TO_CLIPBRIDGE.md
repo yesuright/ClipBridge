@@ -9,7 +9,7 @@ Windows 客户端几秒内收到并自动写入系统剪贴板。
 
 ## 为什么“几乎不要配置”
 
-Milestone 2 的 relay 新增了简化端点 `POST /api/v1/clips/shortcut`：
+relay 提供了简化端点 `POST /api/v1/clips/shortcut`：
 Shortcut 只需要发送 `device_id` + `content` 两个字段，relay 自动生成
 `clip_id`（UUID）、`content_hash`（SHA-256）、`created_at`。
 Apple Shortcuts 没有内置的可靠 UUID 生成器，也无法方便地计算大文本的 SHA-256
@@ -20,11 +20,11 @@ Apple Shortcuts 没有内置的可靠 UUID 生成器，也无法方便地计算�
 创建新 Shortcut 时，**先加 3 个 Text 动作放在最上面**（只改这 3 处，其他永远不用动）：
 
 1. **Text** — 名称/备注 `Relay URL`，值：`http://192.168.1.123:8787`
-   （换成 `scripts/show-lan-setup.ps1` 或 `scripts/start-lan-dev.ps1` 显示的地址；
+   （以 Windows 端 *Connect your iPhone* 窗口显示为准，随时可从托盘 → Connection setup… 重新查看；
    结尾不要加 `/`）
-2. **Text** — 名称/备注 `Bearer Token`，值：`<你的 CLIPBRIDGE_TOKEN>`
-   （从 `services\relay\.env` 读取，或重新生成：
-   `python -c "import secrets; print(secrets.token_hex(32))"`；无真实 token 别截图/分享）
+2. **Text** — 名称/备注 `Bearer Token`，值：`<你的 43 字符访问 Token>`
+   （由 Windows 客户端首次启动自动生成，在 *Connect your iPhone* 窗口 Show/Copy；
+   无真实 token 别截图/分享）
 3. **Text** — 名称/备注 `My Device ID`，值：`iphone`（iPad 用 `ipad`；
    也可以自定义如 `tony-iphone`，只能含字母数字 `_` `-`，字母数字开头）
 
