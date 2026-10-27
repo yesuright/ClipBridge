@@ -5,7 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). While t
 project pre-dates its first public release, sections are keyed by date and the component
 versions they shipped with (`apps/windows` client / `services/relay`).
 
-## [Unreleased] — OSS release preparation (2026-10-27)
+## [Unreleased]
+
+## [1.0.0] — 2026-10-28 (client 1.0.0 / relay 1.0.0)
+
+### Added
+- First public open-source release: MIT license, public GitHub repository, packaged self-contained Windows build.
+- Real-device acceptance (iPhone 13 Pro): bidirectional sync, 108 KB long text, Unicode/emoji, loop prevention, Wi-Fi reconnect recovery, relay restart recovery.
+
+### Changed
+- Product version aligned to 1.0.0 across the Windows client (was 0.4.0) and relay (was 0.2.0).
 
 ### Changed
 - `scripts/build-daily.ps1` maps build paths to a neutral `/clipbridge` prefix

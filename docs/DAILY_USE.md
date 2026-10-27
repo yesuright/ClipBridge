@@ -36,11 +36,11 @@
 1. Windows `Ctrl+C` → iPhone 运行 `Get from ClipBridge`。
 2. iPhone 复制 → 运行 `Send to ClipBridge` → Windows `Ctrl+V`。
 
-iPad 继续使用 Apple Universal Clipboard；没有单独的 iPad 页面或流程。
+iPad 继续使用 Apple Universal Clipboard；没有单独的 iPad 页面或流程。也可以使用与 iPhone 完全相同的快捷指令（设备 ID 改为 `ipad`，见 DEVICE_TEST.md）。
 
 ## iPhone 地址
 
-使用 Home 显示的 `http://<当前-PC-LAN-IP>:8787`。
+使用 Home 显示的 `http://<当前-PC-LAN-IP>:<端口>`（端口回退后以 Connection setup 显示为准）。
 两个 Shortcut 的 API、token 和流程保持不变。
 
 地址变化时（DHCP 续租、切换 Wi-Fi、插拔网线、VPN），Home 会更新并提醒更新 Shortcuts。

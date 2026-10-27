@@ -24,8 +24,9 @@ you prefer otherwise.
 ## Security model in one minute
 
 - **Auth**: every `/api/v1/*` endpoint requires a 256-bit random bearer token generated
-  per install, compared in constant time. `/api/v1/health` is the only unauthenticated
-  endpoint and returns no data.
+  per install, compared in constant time. The only unauthenticated endpoints are
+  `/api/v1/health` (a status string, no user data), the root `/` and the Swagger UI at
+  `/docs` (API shape only).
 - **Transport**: plain HTTP on your LAN. The token and clipboard text are not encrypted
   in transit. This is the documented trade-off of the current release — trusted private
   networks only, never the public internet, never router port-forwarding.

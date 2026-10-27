@@ -94,6 +94,7 @@ original icon. Close hides; explicit Exit ClipBridge shuts down. Logs are in
 | --- | --- | --- |
 | `CLIPBRIDGE_RELAY_URL` | `http://127.0.0.1:8787` | base URL; `/api/v1` appended |
 | `CLIPBRIDGE_DEVICE_ID` | `windows-main` | any `[A-Za-z0-9_-]{1,64}` |
+| `CLIPBRIDGE_INSTANCE_ID` | `ClipBridge` | single-instance mutex/pipe key; set a distinct id (plus `CLIPBRIDGE_HOME`/port) to run an isolated second copy |
 | `CLIPBRIDGE_DEVICE_TOKEN` | — | auto-generated on first run (env only overrides, never persisted) |
 | `CLIPBRIDGE_POLL_INTERVAL_MS` | `2000` | clamped 500–60000 |
 | `CLIPBRIDGE_HTTP_TIMEOUT_SECONDS` | `20` | clamped 5–300 |
