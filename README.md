@@ -355,13 +355,11 @@ logs, no new outbound services) and run the test suites before submitting.
 
 ## License
 
-The license decision (MIT is the current recommendation) is being finalized by the
-maintainer for the first public release; until a `LICENSE` file lands, all rights are
-reserved by the author and no reuse permission is granted.
+Released under the [MIT License](LICENSE) — Copyright (c) 2026 yesuright. Third-party
+dependencies remain under their own licenses; see the dependency manifests
+(`apps/windows/src/**/*.csproj`, `services/relay/requirements.txt`) for the lists.
 
 ---
 
-**Status**: this repository is being prepared for its first public release — the code,
-tests and release build are complete; the remaining checklist (license file, real-device
-acceptance, GitHub publishing) is tracked in
-[docs/OSS-RELEASE-READINESS.md](docs/OSS-RELEASE-READINESS.md).
+**Status**: the code, tests and release build are complete and this repository is ready
+for its first public release.

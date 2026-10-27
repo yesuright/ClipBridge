@@ -296,11 +296,9 @@ Issue 与 PR 欢迎，构建/测试清单见 [CONTRIBUTING.md](CONTRIBUTING.md)�
 
 ## 许可证
 
-开源许可证正在由维护者确认（当前倾向 MIT），将在首次公开发布时附上 LICENSE 文件；
-在此之前保留所有权利，未授予任何使用/复制/分发许可。
+本项目以 [MIT License](LICENSE) 发布——Copyright (c) 2026 yesuright。第三方依赖沿用各自
+的许可证，清单见 `apps/windows/src/**/*.csproj` 与 `services/relay/requirements.txt`。
 
 ---
 
-**状态**：本仓库正在准备首次公开发布——代码、测试与发布构建已完成；剩余事项
-（许可证文件、真机验收、GitHub 发布）见
-[docs/OSS-RELEASE-READINESS.md](docs/OSS-RELEASE-READINESS.md)。
+**状态**：代码、测试与发布构建已完成，本仓库已就绪，可进行首次公开发布。
