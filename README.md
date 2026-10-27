@@ -1,255 +1,367 @@
 # ClipBridge
 
-个人使用的跨设备**纯文本剪贴板同步**工具：Windows 11 PC 与 iPhone 之间互相传递长文本
-（AI prompt / handoff / 日志 / 代码），不再依赖微信、QQ 等聊天软件。
+**Clipboard sync between your Windows PC and your iPhone — plain text, local network, no cloud.**
 
-> **Portability hardening**：ClipBridge 现在可以在**陌生用户的 Windows 电脑**上直接运行 ——
-> 首次启动自动生成本机 token/设备身份并弹出 `Connect your iPhone` 设置窗口；
-> 配置/数据使用标准用户目录，与用户名、安装路径、工作目录无关；端口被占用会自动回退并持久化；
-> 配置损坏会先备份再恢复；安装目录移动后自启动项自动修正。
-> 代理相关行为**保持原样未改动**（用户日常常开代理；已知边界见 docs/PORTABILITY.md §3.6）。
-> 审计清单、设计取舍与验证证据见 [docs/PORTABILITY.md](docs/PORTABILITY.md)。
->
-> 上一里程碑（M4）为 Windows 主窗口 / 主题 / 安全复制，界面设计见 [docs/UI.md](docs/UI.md)；
-> 同步核心与 iPhone API 保持不变。`.local` 仍为实验特性，iPhone 使用当前 PC 的 LAN IP。
-> iPad 继续使用 Apple Universal Clipboard，不作为单独产品界面。
-> M4 iPhone 真机回归：**READY_FOR_USER_RETEST**（本轮未改协议，仍需真机确认一次）。
+ClipBridge moves text between the Windows clipboard and the iOS clipboard (via Apple
+Shortcuts) over your own Wi-Fi: long AI prompts, log excerpts, code snippets, links,
+notes. Copy on one device, paste on the other. Nothing leaves your network, no account
+is required, and there is no third-party service in the middle.
+
+```text
+Windows  Ctrl+C ──►  ClipBridge client ──► local Relay ──► SQLite
+iPhone "Get from ClipBridge" ─────────────► local Relay ──► Windows clipboard (a few seconds)
+
+iPhone copy ──► "Send to ClipBridge" ──► local Relay ──► Windows clipboard (a few seconds)
+```
+
+- **Windows → iPhone**: copy on Windows, tap the *Get from ClipBridge* shortcut on the
+  phone — the text lands in the iOS clipboard.
+- **iPhone → Windows**: copy on the phone, tap the *Send to ClipBridge* shortcut — the
+  text appears on the Windows clipboard within seconds.
+
+Both directions run through one small local relay that ships with the Windows app. The
+iPhone side needs only the built-in **Shortcuts** app — no third-party app, no login,
+and the address/token are entered once per shortcut.
 
 ---
 
-## 它能做什么（Milestone 4）
+## Why
 
-```
-Windows 复制文本 ──► ClipBridge 客户端 ──► Relay ──► 存储 latest + history
-iPhone (Apple Shortcuts) ──► POST /clips/shortcut ──► Relay ──► Windows 轮询 ──► 写入剪贴板
-```
+Chat apps (WeChat, WhatsApp, Telegram, "File Transfer" helpers) are the usual bridge for
+getting text from a phone to a PC. That means your prompts, logs and code pass through
+someone else's servers, get mixed into chat history, and often get truncated or
+reformatted. ClipBridge keeps the same workflow but keeps the data on your own devices:
 
-- 复制后自动同步出去；其他设备的文本几秒内写入 Windows 剪贴板（默认 2s 轮询）
-- **iPhone 双向同步**：同一可信 Wi-Fi 下，两个 Apple Shortcuts（Send / Get）
-  即可工作，不依赖任何第三方 App，无需每次输入 URL/token/device ID
-- **日常使用 = 双击 `artifacts\ClipBridge\ClipBridge.exe`**：
-  - 无 PowerShell、无 Python、无 .NET 安装需求（self-contained + PyInstaller 打包）
-  - 托盘常驻；relay 作为子进程自动启动、自动健康检查、崩溃自动重启（有界退避）
-  - 单实例（重复双击只会激活已有实例）；退出不留孤儿进程（Job Object 保证）
-  - 可选“开机自启”（HKCU Run，无需管理员，默认关闭）
-  - 网络变化 / 睡醒自动恢复；LAN 地址变化时托盘气泡提示
-  - Home 显示并复制当前物理 LAN 地址；mDNS 保留为实验实现，不作为首选地址
-  - 原生 Home / History / Settings；关闭隐藏到托盘，Exit ClipBridge 退出
-  - System / Light / Dark 主题，历史按需阅读及安全复制，原创多尺寸图标
-- `GET /clips/latest?exclude_device_id=<自己>`：设备不会取回自己产生的记录
-- `POST /clips/shortcut`：Shortcut 只需发 `device_id` + `content`，relay 生成
-  `clip_id` / `content_hash` / `created_at`（Apple Shortcuts 无法原生做 UUID/SHA-256）
-- 单条最大 **2 MiB** UTF-8 纯文本，不会截断
-- 最近 **50 条**历史记录（`GET /api/v1/clips?limit=N`）
-- Windows 与 iPhone 的设备 ID 可配置
-- 剪贴板循环（loop）在架构层防住（详见下）
-- 中英文 / emoji / Markdown / JSON / CRLF / tabs 完整 round-trip
+- **Local only** — the relay runs on your PC; traffic never leaves your LAN.
+- **Byte-exact** — Unicode, emoji, quotes, backslashes, tabs, CRLF and ~100 KB prompts
+  survive the trip unchanged (up to 2 MiB per clip).
+- **Zero-config daily use** — double-click one exe; the relay is a managed child process.
 
-## 不支持（明确范围）
+## Features
 
-图片、文件、HTML/富文本剪贴板、二进制、密码管理集成。Windows 检测到非文本剪贴板时安全忽略。
-公网部署 / HTTPS / Tailscale / E2E 加密 / pairing UI / 正式安装器 **不在本里程碑**。
+- Automatic upload of Windows clipboard changes; automatic poll (default every 2 s) for
+  text sent from the phone.
+- Two Apple Shortcuts (`Send to ClipBridge` / `Get from ClipBridge`), ~5–9 actions each,
+  built with the built-in Shortcuts editor. You never re-enter the URL or token.
+- First run provisions everything: a 256-bit random access token, a device id, and a
+  *Connect your iPhone* window that shows the exact address and token to paste into the
+  shortcuts.
+- Tray-resident Windows app with a native UI (Home / History / Settings), System/Light/Dark
+  themes, pause/resume, "check now", history browser with safe copy, start-with-Windows
+  (per-user, off by default).
+- Self-healing runtime: the relay restarts with bounded backoff after a crash, survives
+  sleep/wake and network changes, and frees itself from a busy port by falling back to
+  the next free port (persisted, with a tray notice).
+- Portable paths: config in `%APPDATA%\ClipBridge`, data in `%LOCALAPPDATA%\ClipBridge`;
+  nothing depends on the install location, the user name, or the working directory.
+  Paths with spaces and Chinese characters are covered by tests.
+- Loop protection at four layers so your own copies never bounce back as new clips.
+- Diagnostics: `ClipBridge.exe --doctor` (read-only), `--status`, JSON status line, and
+  logs that never contain clipboard content or tokens.
 
-## 目录结构
+**Not supported (by design, today):** images, files, rich text/HTML, binary formats;
+public-internet deployment; HTTPS; end-to-end encryption; an installer; auto-updates;
+code signing; an offline sync queue. See [Known issues](#known-issues) and
+[docs/SECURITY.md](docs/SECURITY.md).
+
+## System requirements
+
+| Component | Requirement |
+| --- | --- |
+| Windows PC | Windows 11 (developed and tested on Windows 11; Windows 10 64-bit expected to work but untested) |
+| Runtime | None to install — the build is self-contained (no .NET or Python install needed) |
+| iPhone / iPad | Any device that can run the built-in Apple **Shortcuts** app |
+| Network | PC and phone on the **same trusted Wi-Fi/LAN**, IPv4; router must not have AP isolation enabled |
+| Privileges | No administrator rights needed (per-user autostart, per-user data) |
+
+## Installation (Windows)
+
+1. Download the release archive from the
+   [Releases](../../releases) page and unzip it anywhere — for example
+   `D:\Tools\ClipBridge\`. (The folder can contain spaces; you do not need to install it.)
+2. Double-click **`ClipBridge.exe`**. That single exe starts the relay child process and
+   the tray app.
+3. If Windows Defender Firewall asks, click **Allow** — for **private networks only**.
+   ClipBridge never edits firewall rules itself and never forwards ports.
+4. A first-run window *Connect your iPhone* appears with the LAN **address** and the
+   **access token**. Keep it open and set up the phone (next section).
+
+> The exe is not code-signed yet, so SmartScreen may show "Windows protected your PC" —
+> *More info → Run anyway*. Verify what you download against the release checksum
+> (published with each release).
+
+## Connecting your iPhone (Apple Shortcuts)
+
+Create two shortcuts in the built-in Shortcuts app. You need the **address** and
+**token** from the *Connect your iPhone* window (re-open it any time: tray icon →
+*Connection setup…*).
+
+**Shortcut 1 — "Send to ClipBridge"** (iPhone → Windows), 5 actions:
+
+1. **Text** — the relay address, e.g. `http://192.168.1.14:8787` (no trailing `/`)
+2. **Text** — the access token (the 43-character string only; no `Bearer ` prefix)
+3. **Text** — this device's id, e.g. `iphone` (letters/digits/`-`/`_`)
+4. **Get Clipboard**
+5. **If** Clipboard has any value → **Get Contents of URL**:
+   - Method **POST**, URL `[address]/api/v1/clips/shortcut`
+   - Headers: `Authorization` = `Bearer ` + token variable; `Content-Type` = `application/json`
+   - Request Body: **JSON dictionary** with keys `device_id` ← text-3 and `content` ← Clipboard
+   - (*Use the dictionary editor — do not hand-build a JSON string, or quotes/emoji will break.*)
+   - Otherwise → Notification "Clipboard is empty"
+
+**Shortcut 2 — "Get from ClipBridge"** (Windows → iPhone), ~9 actions:
+
+1. **Text** — the relay address (same as above)
+2. **Text** — the access token
+3. **Text** — this device's id, e.g. `iphone`
+4. **URL** — `[address]/api/v1/clips?limit=10&exclude_device_id=iphone`
+5. **Get Contents of URL** (GET) — header `Authorization` = `Bearer ` + token variable
+6. **Get Dictionary from Input** → **Get Value for Key** `clips`
+7. **If** `clips` has any value → **Get Item from List** (first item) →
+   **Get Value for Key** `content` → **Copy to Clipboard**
+   - Otherwise → Notification "No new content"
+8. Optional: Notification with `size_bytes` / `device_id`
+9. Add both shortcuts to the Home Screen or Action button.
+
+> The `exclude_device_id` filter is what prevents you from copying back the text you just
+> sent. A detailed step-by-step guide with screenshots-style examples lives in
+> [shortcuts/SEND_TO_CLIPBRIDGE.md](shortcuts/SEND_TO_CLIPBRIDGE.md) and
+> [shortcuts/GET_FROM_CLIPBRIDGE.md](shortcuts/GET_FROM_CLIPBRIDGE.md) (Chinese, English
+> translation in progress).
+
+## First run, step by step
+
+1. **Start** — double-click `ClipBridge.exe`. The main window opens; the app stays in the
+   tray when closed.
+2. **Connect your iPhone** — appears automatically on first start. It shows:
+   - **Address** — the current LAN address, e.g. `http://192.168.1.14:8787`
+   - **Access token** — this install's random token (Show / Copy buttons)
+3. **Set up the two shortcuts** on the phone with those two values (section above).
+4. **Test both directions**:
+   - Copy text on Windows → on the phone tap *Get from ClipBridge* → paste anywhere.
+   - Copy text on the phone → tap *Send to ClipBridge* → within a few seconds `Ctrl+V`
+     on Windows pastes it.
+5. **Optional** — Settings → *Start with Windows* to launch into the tray at login.
+
+The address comes from your PC's current LAN IP. If your router hands out new IPs
+(DHCP), re-open *Connection setup…* and update the address in both shortcuts — the token
+never changes.
+
+## Daily use
+
+| You want | You do |
+| --- | --- |
+| Send the PC clipboard to the phone | Copy on Windows → tap **Get from ClipBridge** on the phone |
+| Send the phone clipboard to the PC | Copy on iPhone → tap **Send to ClipBridge** → `Ctrl+V` on Windows |
+| Pause sync (e.g. during a screen share) | Tray icon → *Pause sync* (Settings → *Resume sync*) |
+| Read recent history | Tray → Home → History (last 50 clips, tap to read, *Copy text* to re-copy) |
+| Check the current address | Home → *iPhone connection* → *Copy address* |
+| Really quit | Tray icon → *Exit ClipBridge* (the relay child exits with it) |
+
+Closing the window only hides it — sync keeps running in the tray.
+
+## How it works
 
 ```text
-ClipBridge/
-├─ apps/
-│  └─ windows/                 # C#/.NET 8 客户端（Core 库 + 原生主窗口 / tray 宿主 + 生命周期管理）
-├─ services/
-│  └─ relay/                   # Python FastAPI + SQLite relay（可 PyInstaller 打包为单 exe）
-├─ shortcuts/                  # iPhone Shortcuts 接入指南（两个 Shortcut）
-├─ docs/                       # ARCHITECTURE / PROTOCOL / SECURITY / DEVELOPMENT / DEVICE_TEST
-│                              #   / DAILY_USE / LIFECYCLE
-├─ scripts/
-│  ├─ build-daily.ps1          # 构建 daily-use artifact（publish + pyinstaller → artifacts\ClipBridge）
-│  ├─ verify-daily.ps1         # daily artifact 集成冒烟测试（单实例/崩溃恢复/无孤儿/干净退出…）
-│  ├─ verify-portability.ps1   # 跨用户/跨路径/端口冲突/损坏配置/缺组件 的隔离环境验证
-│  ├─ dev-relay.ps1 / dev-client.ps1 / start-lan-dev.ps1 / show-lan-setup.ps1
-│  ├─ lib/LanSetup.psm1        # 可测试的 LAN 地址选择逻辑
-│  └─ tests/test-lan-setup.ps1 # LAN 逻辑单测
-├─ tests/
-│  └─ e2e/                     # 全链路端到端验证脚本（含模拟 iPhone Shortcut 流程）
-├─ artifacts/                  # （构建生成，gitignored）daily-use 产物
-├─ NuGet.Config                # 仓库级 NuGet 镜像配置（不影响全局）
-└─ README.md
+┌────────────────────────── Windows ──────────────────────────┐      ┌─────────┐
+│                                                             │      │ iPhone  │
+│  ClipBridge.exe (tray, .NET 8, self-contained)              │      │         │
+│   ├── clipboard listener → POST /api/v1/clips               │      │Shortcut │
+│   ├── poll /api/v1/clips/latest (2 s) → write clipboard     │      │  Send   │
+│   └── manages ──► relay\ClipBridgeRelay.exe (PyInstaller)   │      │  Get    │
+│                     FastAPI + SQLite, 0.0.0.0:8787  ◄───────┼──────┴─────────┘
+│                     latest clip + 50-item history           │   same trusted LAN,
+│   Job Object: relay always dies with the client             │   Bearer token auth
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## 日常使用（最终用户体验）
+- The **relay** is a local HTTP service (FastAPI + SQLite). It stores the latest clip and
+  the last 50 clips. Every `/api/v1/*` endpoint requires the shared bearer token.
+- The **client** watches the Windows clipboard (event-driven), uploads new text, and polls
+  for incoming text, filtering out its own uploads and anything it just applied.
+- The **shortcuts** call the same relay: `POST …/clips/shortcut` sends the phone clipboard;
+  `GET …/clips?exclude_device_id=…` fetches the newest text from other devices. The relay
+  generates ids, timestamps and the SHA-256 content hash, because Shortcuts cannot compute
+  them natively.
+- **Loop prevention** (why your own copies don't echo forever): (1) the client marks every
+  applied clip and ignores the same content hash for 30 s; (2) poll results exclude the
+  device's own uploads (900 s memory); (3) the relay rejects identical re-posts from the
+  same device within a 15 s window (`409 duplicate_content_in_window`); (4) clip ids are
+  idempotent (`409 duplicate_clip_id`).
+
+Protocol details: [docs/PROTOCOL.md](docs/PROTOCOL.md) · architecture:
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · lifecycle:
+[docs/LIFECYCLE.md](docs/LIFECYCLE.md).
+
+## Security & privacy
+
+ClipBridge is designed for personal use across devices you own, on a network you trust.
+The full threat model and rationale live in [docs/SECURITY.md](docs/SECURITY.md). The
+short version:
+
+- **No cloud, no telemetry, no accounts.** The only network peer is the relay running on
+  your own PC. Traffic stays on your LAN.
+- **Authentication.** Every API call carries a 256-bit random bearer token (generated
+  per install), compared in constant time. Without the token, an attacker on the LAN can
+  do nothing but see that the port is open.
+- **Transport is plain HTTP inside your LAN.** The token and clipboard text are *not*
+  encrypted in transit. This is acceptable on a trusted home/office Wi-Fi and is the
+  documented trade-off of this release; never use it on public Wi-Fi, never forward the
+  port at the router. HTTPS / VPN-tunnel deployment is a documented, supported
+  configuration change for later milestones.
+- **Logs are redacted by construction and by test.** Neither the relay nor the client
+  ever writes clipboard content or the token to disk — only ids, sizes, 8-char hash
+  prefixes and status codes.
+- **Storage.** Clipboard text sits in a local SQLite database
+  (`%LOCALAPPDATA%\ClipBridge\clipbridge.db`); the token sits in
+  `%APPDATA%\ClipBridge\config.json` — both outside the app folder, protected only by
+  your Windows account. Treat them like any other personal file.
+- **The token is shared** by all your devices (single trust boundary). Anyone who has it
+  can read and write your clip history — keep it out of chat, screenshots and repos.
+- **Least privilege.** No admin rights, no services, no drivers, no firewall/VPN/proxy
+  changes — ClipBridge never modifies your system security or network settings.
+- **Child process safety.** The relay runs as a child of the tray app inside a Job Object
+  (kill-on-close), configured via environment variables — the token is never on a command
+  line (where other local processes could read it).
+
+Vulnerability reports: see [SECURITY.md](SECURITY.md).
+
+## Known issues
+
+1. **Local requests can be hijacked by HTTP proxies in some shells** (open, decision
+   deferred). If a Windows process is started from a shell that sets `HTTP_PROXY` /
+   `HTTPS_PROXY` and does *not* exclude `127.0.0.1` in `NO_PROXY`, .NET may route
+   ClipBridge's loopback requests through that proxy. The proxy does not know your local
+   relay, so polling and uploads fail with `relay_404` while health may still look OK.
+   - **Impact**: sync stops in that specific shell/session. Real-world daily use with the
+     tray app (started from Explorer) is not affected — verified: the daily instance's
+     logs show zero `relay_404` while proxies are enabled on the test machine.
+   - **Why**: ClipBridge intentionally uses .NET's default proxy handling and does not
+     special-case loopback addresses; changing this is a documented open decision
+     ([docs/PORTABILITY.md §3.6](docs/PORTABILITY.md)).
+   - **Workaround** (choose one, per affected shell): add loopback to `NO_PROXY`
+     (`NO_PROXY=localhost,127.0.0.1`), or configure your proxy client to bypass local
+     addresses, or launch the app from Explorer/Start Menu instead of that shell.
+   - **Risk worth knowing**: a mis-routed request would carry clipboard text and the
+     bearer token to the proxy process. That is one more reason to only point ClipBridge
+     at relays you control.
+   - ClipBridge **never** changes your system proxy, VPN or firewall settings — fixing the
+     environment is a user decision, and a future opt-in "force loopback direct" switch
+     is the reserved fix (not implemented in this release).
+
+2. **Unsigned binaries** — SmartScreen/Defender may warn on first run. Expected until
+   code signing is in place (see the roadmap in the release notes).
+
+3. **`clipbridge.local` (mDNS) is experimental** — some iPhones fail to resolve it.
+   Use the plain IP address from *Connection setup…*; mDNS stays off the critical path.
+
+4. **LAN IP changes require a shortcut update** — DHCP renewals or Wi-Fi switches change
+   the PC address; update both shortcuts (the token stays valid). The tray shows a notice
+   when the address changes.
+
+5. **Port changes when 8787 is busy** — if another program owns the port, ClipBridge
+   moves to the next free port and tells you; update the port in both shortcuts.
+
+6. **No offline queue** — if the phone or the PC is unreachable when you send, that clip
+   is not queued; send it again after the connection returns (uploads retry 3× with
+   backoff before giving up).
+
+7. **Clipboard contention** — if another program holds the Windows clipboard open, the
+   client retries a few times and then skips that copy (logged, never crashes).
+
+## Troubleshooting
+
+First run the read-only doctor: `ClipBridge.exe --doctor` (paths, config state, relay
+component, port bindability, LAN address, autostart health — prints a token fingerprint,
+never the token).
+
+| Symptom | What to check / do |
+| --- | --- |
+| Phone can't reach `http://<PC-IP>:8787/api/v1/health` (Safari) | Same Wi-Fi? PC IP changed (re-open *Connection setup…*)? Phone off Wi-Fi? AP isolation on the router? |
+| Connection refused | Relay not running — start `ClipBridge.exe`; check tray state; `--doctor` |
+| Timeout but internet works on the phone | Windows Firewall blocked inbound — allow `ClipBridgeRelay.exe` on **private** networks; confirm the Windows network profile is *Private*, not *Public* |
+| Shortcut gets **401** | Token mismatch — re-copy the token from *Connection setup…* (watch for stray spaces/newlines in the shortcut) |
+| *Get* returns **404 not_found** | Normal empty state: no *other-device* text exists yet — send one from the PC first |
+| *Send* returns **409** | Same text re-sent within the 15 s dedup window — treat as already-sent |
+| **413** | Over the 2 MiB per-clip limit — split the text |
+| Phone connects to nothing after a VPN/dock change | The auto-picked LAN adapter changed; set the address manually or configure `LanIpOverride` |
+| Sync stuck "Offline" | Wait 1–5 min (auto-retry + self-heal), or Settings → *Restart relay*; then check logs |
+| "Relay component missing" | The `relay\` folder was not copied with `ClipBridge.exe` — re-extract the full folder |
+| Where are the logs? | `%LOCALAPPDATA%\ClipBridge\logs\` (client + relay; ids/sizes/hashes only, never content or tokens) |
+
+## Building from source
+
+Prerequisites: **.NET 8 SDK** and **Python 3.12+** (3.13 tested). Windows PowerShell 5.1
+is the tested shell for the scripts.
 
 ```powershell
-# 构建 daily-use artifact（一次性；内含 relay 打包 + 客户端 self-contained publish）
-powershell -ExecutionPolicy Bypass -File scripts\build-daily.ps1
-```
-
-之后用户只需要：**双击 `artifacts\ClipBridge\ClipBridge.exe`**。
-
-首次启动会自动完成配置（不需要手工编辑 JSON）：
-
-1. 生成这台电脑专属的访问 token 和设备 ID，写入 `%APPDATA%\ClipBridge\config.json`；
-2. 弹出 `Connect your iPhone`，显示**地址**和**token**，直接填进两个 Shortcut；
-3. 之后随时可从托盘 `Connection setup…` 或 Settings 再次打开。
-
-开机自启、暂停/恢复、复制 iPhone 地址和日志也可通过托盘操作。
-详细普通用户指南：`docs/DAILY_USE.md`；进程/生命周期细节：`docs/LIFECYCLE.md`；
-可移植性设计与验收：`docs/PORTABILITY.md`。
-
-## 快速开始（本地开发）
-
-### 1. Relay
-
-需要 Python 3.12+。
-
-```powershell
+# 1. Relay (dev run, loopback only)
 cd services\relay
 python -m venv .venv
 .\.venv\Scripts\pip install -r requirements.txt
-Copy-Item .env.example .env          # 然后编辑 CLIPBRIDGE_TOKEN（必填）
-.\.venv\Scripts\python run.py        # http://127.0.0.1:8787 （Swagger: /docs）
-```
+Copy-Item .env.example .env          # set CLIPBRIDGE_TOKEN (required, fail-fast)
+.\.venv\Scripts\python run.py        # http://127.0.0.1:8787 (Swagger at /docs)
 
-Relay 没有 token 会拒绝启动（fail-fast）。token 生成：
-`python -c "import secrets; print(secrets.token_hex(32))"`
-
-### 2. Windows 客户端
-
-```powershell
-# 需要 .NET 8 SDK
+# 2. Windows client (dev run)
 dotnet run --project apps\windows\src\ClipBridge.Win
+
+# 3. Release artifact (self-contained client + PyInstaller relay + README)
+powershell -ExecutionPolicy Bypass -File scripts\build-daily.ps1 -OutputDir artifacts\ClipBridge
 ```
 
-开发运行时若旁边没有打包的 relay exe，客户端自动进入 “external relay” 模式
-（只同步，不管理 relay 进程）——开发体验与 M2 一致。启动后：系统托盘出现 ClipBridge 图标，
-复制任意文本即自动上传；主窗口和托盘提供暂停同步 / 立即检查 / 复制 iPhone 地址 / 日志 /
-数据目录 / 开机自启 / 退出。
+`scripts/dev-relay.ps1`, `scripts/dev-client.ps1` and `scripts/start-lan-dev.ps1` (LAN
+mode with explicit security notice) wrap the dev flows. Environment variables and storage
+overrides (`CLIPBRIDGE_HOME`, …) are documented in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-### 3. LAN 模式（iPhone 接入）
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\start-lan-dev.ps1
-```
-
-该脚本会：启动 relay（绑定 `0.0.0.0`，LAN 模式）+ 启动 Windows 客户端 + 显示建议的
-LAN URL 与安全提示。**它不会**：改防火墙 / 暴露公网 / 打印 token / 覆盖你的配置。
-
-> 默认仍然是 `127.0.0.1`（仅本机）。只有显式配置 `CLIPBRIDGE_BIND_HOST=0.0.0.0`
-> 后 relay 才对外监听。LAN HTTP 只用于可信家庭/办公 Wi-Fi（token 明文传输，
-> 详见 `docs/SECURITY.md`），不要做路由器端口转发。
-
-拿到 LAN URL 后，按 `docs/DEVICE_TEST.md` 在 iPhone 上配置两个 Shortcut
-（约 5–10 个动作，无需第三方 App），完成真机双向同步验证。
-
-### 4. 模拟 iPhone 发送（curl / PowerShell）
+### Tests
 
 ```powershell
-$token = "<CLIPBRIDGE_TOKEN>"
-# Shortcut 简化端点（推荐，relay 生成 clip_id/hash/created_at）:
-Invoke-RestMethod -Method POST -Uri "http://127.0.0.1:8787/api/v1/clips/shortcut" `
-  -Headers @{ Authorization = "Bearer $token" } -ContentType "application/json" `
-  -Body (@{ device_id = "iphone"; content = "Hello from iPhone" } | ConvertTo-Json)
+# Relay unit/integration tests (pytest)
+cd services\relay && .\.venv\Scripts\python -m pytest && cd ..\..
 
-# 获取最新“非本设备”内容:
-Invoke-RestMethod -Uri "http://127.0.0.1:8787/api/v1/clips/latest?exclude_device_id=iphone" `
-  -Headers @{ Authorization = "Bearer $token" }
-```
-
-几秒内 Windows 剪贴板会变成 `Hello from iPhone`，随后 `Ctrl+V` 粘贴即可。
-完整的 iPhone Shortcuts 配置见 `shortcuts/` 与 `docs/DEVICE_TEST.md`。
-
-## 如何测试
-
-```powershell
-# Relay 单元/集成测试（104 个：含 shortcut 简化创建 / exclude_device_id / 去重 / Unicode /
-#   admin shutdown / 打包路径与端口冲突退出码…）
-cd services\relay
-.\.venv\Scripts\pip install -r requirements-dev.txt
-.\.venv\Scripts\python -m pytest
-
-# Windows 单元测试（275 个：含 M4 界面/安全复制/主题，M2/M3 生命周期/状态/LAN/mDNS/配置迁移，
-#   以及本轮新增的路径解析、配置自愈、首次配置、端口回退、自启动修复…）
+# Windows core tests (xunit)
 dotnet test apps\windows\tests\ClipBridge.Core.Tests
 
-# LAN helper 逻辑测试（纯函数，无需 Pester）
-powershell -ExecutionPolicy Bypass -File scripts\tests\test-lan-setup.ps1
+# Packaged-artifact smoke test (real processes, isolated HOME, no admin)
+powershell -ExecutionPolicy Bypass -File scripts\verify-daily.ps1 -Artifact artifacts\ClipBridge
 
-# 全链路端到端（真实剪贴板 + 真实 relay + 真实客户端 + 模拟 iPhone Shortcut 流程）
-powershell -ExecutionPolicy Bypass -File tests\e2e\run-end-to-end.ps1
+# Cross-environment portability harness (fresh config, Unicode paths, busy port,
+# second launch, corrupt config, missing component)
+powershell -ExecutionPolicy Bypass -File scripts\verify-portability.ps1 -Artifact artifacts\ClipBridge
 
-# M4.1 cold-path 可靠性压测（fresh launch / idle / relay 恢复后的第一次复制 → 100% 成功）
-# 默认 50 cycles；-Scenario All|Fresh|Idle|RelayRestart；隔离实例 + 独立端口，不影响真实会话
-powershell -ExecutionPolicy Bypass -File tests\e2e\cold-path-reliability.ps1 -Cycles 50
-
-# daily artifact 集成冒烟（无控制台/单实例/relay 启动/崩溃恢复/干净退出/无孤儿）
-powershell -ExecutionPolicy Bypass -File scripts\verify-daily.ps1
-
-# 跨环境可移植性验证（隔离 HOME/实例 ID：全新配置、中文路径、端口冲突、重复启动、
-#   损坏配置、缺 relay 组件、剪贴板→relay 链路）— 不触碰真实用户配置
-powershell -ExecutionPolicy Bypass -File scripts\verify-portability.ps1
-
-# Relay lifecycle 恢复压测（意外退出 → 自动恢复；restart budget 耗尽 → 自动自愈，无需用户重启）
-# 20 次 kill/recover + 4 次完整重启 + 2 轮「耗尽 budget → 自愈 → 稳定运行 → 再次崩溃仍能恢复」
-powershell -ExecutionPolicy Bypass -File tests\e2e\relay-lifecycle-stress.ps1
+# Pre-commit secret scan
+powershell -ExecutionPolicy Bypass -File scripts\secret-scan.ps1
 ```
 
-## 循环（clipboard loop）是怎么防住的
+iPhone end-to-end behaviour on real hardware is verified manually with
+[docs/DEVICE_TEST.md](docs/DEVICE_TEST.md) (Chinese).
 
-Windows 复制 A → 上传 A → relay → Windows 又下载 A → 写剪贴板 A → listener 触发 → 再上传 A → …
+## Project layout
 
-ClipBridge 在 **4 层**防御：
+```text
+apps/windows/        C# .NET 8 tray client (ClipBridge.Core + ClipBridge.Win + xunit tests)
+services/relay/      Python FastAPI relay (SQLite, PyInstaller-packaged) + pytest suite
+shortcuts/           Apple Shortcuts setup guides (Send / Get)
+docs/                architecture, protocol, security, development, daily-use, portability
+scripts/             build / verify / dev helpers (Windows PowerShell)
+tests/e2e/           full-stack end-to-end script (real clipboard + simulated phone flows)
+```
 
-1. **客户端应用层**：写到剪贴板前先 `MarkApplied(clip_id, content_hash)`，随后 listener 看到同一
-   content_hash 直接忽略（30s 窗口），不重新上传 —— 主防线。
-2. **客户端轮询层**：轮询结果过滤掉本设备（device_id == 自己）及本会话上传过的 clip_id 回显，
-   不会用旧内容反复改写剪贴板。
-3. **Relay 层**：同一设备在 15s 内发布完全相同的 content（同 content_hash）→ `409
-   duplicate_content_in_window`，history 里不会出现重复记录。
-4. **幂等**：clip_id 是主键，重复 POST 同一 clip_id → `409 duplicate_clip_id`。
+## Contributing
 
-**不会误伤用户**：内容相同的两次复制是不同的事件（不同 clip_id），超过窗口后会被正常接受；
-"字符串相同就忽略" 的设计被显式避免。详见 `docs/PROTOCOL.md`。
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
+build/test checklist. Please keep the security invariants (no tokens/clipboard content in
+logs, no new outbound services) and run the test suites before submitting.
 
-## 当前限制
+## License
 
-- 仅纯文本（`text/plain`）；非文本剪贴板被忽略
-- 本地 HTTP + token；**LAN 明文 HTTP 仅限可信私有网络**，生产需 HTTPS（见 `docs/SECURITY.md`）
-- 无离线队列；网络恢复后自动恢复同步
-- 无安装器、自动更新、代码签名（后续里程碑）；未签名 exe 首次运行会有 SmartScreen 提示
-- token 为全设备共享（无 per-device 键）；E2E 加密为未来方向，本轮未实现
-- 剪贴板在 Windows 侧被其他程序短占时，客户端重试 5 次后跳过该次复制（不崩溃）
-- **代理行为保持现状**（用户日常常开代理）：relay 客户端沿用 .NET 默认代理解析。
-  若某个环境用 `HTTP_PROXY` 强制所有流量走代理且未排除 `127.0.0.1`，
-  本机同步请求可能被代理截获；已知边界与后续选项见 `docs/PORTABILITY.md` §3.6。
-- M3 已由用户完成 iPhone 双向验证；M4/本轮真机回归待用户执行（`docs/DEVICE_TEST.md`）
-- 真实"第二台干净 Windows 电脑 / 虚拟机"验收尚未执行，步骤见 `docs/PORTABILITY.md` 第 5 节
+The license decision (MIT is the current recommendation) is being finalized by the
+maintainer for the first public release; until a `LICENSE` file lands, all rights are
+reserved by the author and no reuse permission is granted.
 
-## 文档索引
+---
 
-| 文档 | 内容 |
-| --- | --- |
-| `docs/UI.md` | M4 原生界面架构、状态绑定、主题、隐私、键盘与 DPI |
-| `docs/ARCHITECTURE.md` | 组件、数据流、接收策略、信任边界、LAN/Shortcut 设计 |
-| `docs/PROTOCOL.md` | 端点、schema、`/clips/shortcut`、`exclude_device_id`、鉴权、hash、dedup、错误码 |
-| `docs/SECURITY.md` | 威胁模型、token 处理、LAN 明文 HTTP 定位、HTTPS、已知限制 |
-| `docs/DEVELOPMENT.md` | 前置条件、命令、环境变量、LAN 脚本、NuGet 配置说明 |
-| `docs/DEVICE_TEST.md` | **iPhone 真机手测指南**（前置、URL、两个 Shortcut、双向测试、排障） |
-| `docs/DAILY_USE.md` | **普通用户日常指南**：启动 / 开机自启 / 暂停 / 退出 / 排障 / IP 变化 |
-| `docs/LIFECYCLE.md` | 进程模型、parent/child 生命周期、崩溃恢复、睡醒恢复、数据位置 |
-| `shortcuts/SEND_TO_CLIPBRIDGE.md` | iPhone Shortcuts：发送剪贴板到 Windows |
-| `shortcuts/GET_FROM_CLIPBRIDGE.md` | iPhone Shortcuts：拉取/复制最新「非本设备」文本 |
-
-## 技术选型（Milestone 1 + Milestone 3 增量）
-
-- **Windows 客户端**：C# / .NET 8 + WinForms（隐藏窗口 + `AddClipboardFormatListener`），
-  核心逻辑放在可单元测试的 `ClipBridge.Core`（无 UI 依赖）。
-  不用 Electron，不引入 Chromium。M3 增量：self-contained publish（用户无需装 .NET）、
-  单实例（mutex + named pipe）、Relay 子进程管理（Job Object kill-on-close）、
-  事件驱动网络监控、应用内 mDNS 应答器、HKCU Run 开机自启、可观测状态模型。
-- **Relay**：Python 3.13 + FastAPI + uvicorn，存储用 stdlib `sqlite3`（零额外基础设施）。
-  M3 增量：PyInstaller onedir 打包成单个自包含 exe（用户无需 Python）；
-  新增 `POST /api/v1/admin/shutdown`（Bearer 鉴权，仅用于优雅停服，不影响既有协议）。
-  理由见 `docs/ARCHITECTURE.md`。
-- **传输**：短轮询（默认 2s，可配 0.5–60s）。理由见 `docs/ARCHITECTURE.md`。
-
-## 许可
-
-个人工具项目；未定 license（如需开源请在后续里程碑决定）。
+**Status**: this repository is being prepared for its first public release — the code,
+tests and release build are complete; the remaining checklist (license file, real-device
+acceptance, GitHub publishing) is tracked in
+[docs/OSS-RELEASE-READINESS.md](docs/OSS-RELEASE-READINESS.md).
