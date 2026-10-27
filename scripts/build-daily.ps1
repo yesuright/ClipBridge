@@ -54,8 +54,12 @@ if (-not (Test-Path $pyInstaller)) {
 # ------------------------------------------------------------------ 1) Windows client (self-contained)
 Write-Host ''
 Write-Host '[1/3] Publishing Windows client (self-contained, no .NET runtime required)...' -ForegroundColor Cyan
+# PathMap rewrites build-machine paths (PDB source paths + the RSDS PDB reference inside
+# each PE) to a neutral /clipbridge prefix, so a distributed artifact never embeds the
+# maintainer's Windows account name or personal folder layout.
 & $dotnet publish (Join-Path $root 'apps\windows\src\ClipBridge.Win\ClipBridge.Win.csproj') `
-    -c $Configuration -r $Runtime --self-contained true -o $artifactDisk --nologo -v q
+    -c $Configuration -r $Runtime --self-contained true -o $artifactDisk --nologo -v q `
+    -p:PathMap="$root=/clipbridge"
 if ($LASTEXITCODE -ne 0) { Write-Host 'client publish failed'; exit $LASTEXITCODE }
 
 # ------------------------------------------------------------------ 2) packaged relay (PyInstaller onedir)
@@ -86,6 +90,10 @@ New-Item -ItemType Directory -Force -Path $artifact | Out-Null
 
 # client (published)
 Get-ChildItem -Path $artifactDisk -Force | Copy-Item -Destination $artifact -Recurse -Force
+
+# end users get no debug symbols: PDBs are build artifacts, they are not needed to run,
+# and removing them keeps the privacy guarantee even if PathMap is ever bypassed
+Get-ChildItem -Path $artifact -Recurse -Filter '*.pdb' -File | Remove-Item -Force
 
 # relay (packaged) → artifact\relay\
 $relayDist = Join-Path $buildDir 'dist-pyinstaller\ClipBridgeRelay'
