@@ -13,12 +13,21 @@ public sealed class RelayApiException : Exception
     public string? ErrorCode { get; }
     public string? ResponseBody { get; }
 
-    public RelayApiException(int statusCode, string? errorCode, string? responseBody, string? message = null)
+    /// <summary>
+    /// Request path that produced the error (no token, no content). A 404 on our own relay
+    /// is otherwise indistinguishable from "wrong base address" in a log line.
+    /// </summary>
+    public string? RequestPath { get; }
+
+    public RelayApiException(
+        int statusCode, string? errorCode, string? responseBody, string? message = null,
+        string? requestPath = null)
         : base(message ?? $"relay returned HTTP {statusCode} ({errorCode ?? "unknown"})")
     {
         StatusCode = statusCode;
         ErrorCode = errorCode;
         ResponseBody = responseBody;
+        RequestPath = requestPath;
     }
 }
 
@@ -41,6 +50,9 @@ public sealed class RelayClient : IRelayClient, IDisposable
     public RelayClient(ClientConfig config, HttpMessageHandler? handler = null)
     {
         _config = config;
+        // Proxy behaviour is intentionally the .NET default here: the user runs ClipBridge
+        // with a system proxy and asked for that to stay unchanged. A proxy that intercepts
+        // loopback is a known open item (see docs/PORTABILITY.md, finding P0-2).
         _http = handler is null ? new HttpClient() : new HttpClient(handler);
         _http.BaseAddress = config.ApiBaseUri;
         _http.Timeout = TimeSpan.FromSeconds(config.HttpTimeoutSeconds);
@@ -126,7 +138,8 @@ public sealed class RelayClient : IRelayClient, IDisposable
         {
             // non-JSON error body — keep raw text only for diagnostics
         }
-        return new RelayApiException((int)response.StatusCode, errorCode, body);
+        return new RelayApiException((int)response.StatusCode, errorCode, body,
+            requestPath: response.RequestMessage?.RequestUri?.PathAndQuery);
     }
 
     public void Dispose() => _http.Dispose();

@@ -4,13 +4,14 @@ using Microsoft.Win32;
 namespace ClipBridge.Core.Startup;
 
 /// <summary>
-/// User-level "Start with Windows" registration (Milestone 3). HKCU Run is the chosen
-/// mechanism: no admin rights, per-user, reversible, trivially detectable, installer-friendly.
+/// User-level "Start with Windows" registration. HKCU Run is the chosen mechanism:
+/// no admin rights, per-user, reversible, trivially detectable, installer-friendly.
 /// Default = OFF; it is only ever enabled explicitly by the user (tray menu / CLI).
 /// </summary>
 public interface IStartupRegistration
 {
     bool IsEnabled();
+    string? GetCommand();
     void Enable(string commandLine);
     void Disable();
 }
@@ -69,7 +70,7 @@ public sealed class WindowsStartupRegistration : IStartupRegistration
 }
 
 /// <summary>
-/// Pure enable/disable/toggle logic on top of an <see cref="IStartupRegistration"/> store.
+/// Pure enable/disable/repair logic on top of an <see cref="IStartupRegistration"/> store.
 /// The command line is built by the host (tray) — the logic here is testable with a fake.
 /// </summary>
 public static class StartupManager
@@ -105,4 +106,78 @@ public static class StartupManager
     /// </summary>
     public static string BuildCommandLine(string exePath) =>
         $"\"{exePath}\" --tray-autostart";
+
+    /// <summary>Extracts the executable path from a HKCU Run command line.</summary>
+    public static string? ExtractExecutable(string? commandLine)
+    {
+        if (string.IsNullOrWhiteSpace(commandLine))
+        {
+            return null;
+        }
+        var text = commandLine.Trim();
+        if (text[0] == '"')
+        {
+            var end = text.IndexOf('"', 1);
+            return end > 1 ? text[1..end] : null;
+        }
+        var space = text.IndexOf(' ');
+        return space < 0 ? text : text[..space];
+    }
+
+    /// <summary>
+    /// True when the registered command no longer launches this installation:
+    /// the path is missing (folder moved/renamed/deleted) or points at a stale sibling
+    /// binary in the current folder (in-place upgrade). A different, still-existing
+    /// installation elsewhere is left alone — that is a deliberate second copy.
+    /// </summary>
+    public static bool IsStale(string? commandLine, string currentExePath)
+    {
+        var registered = ExtractExecutable(commandLine);
+        if (registered is null)
+        {
+            return true;
+        }
+        try
+        {
+            if (!File.Exists(registered))
+            {
+                return true;
+            }
+        }
+        catch
+        {
+            return true;
+        }
+
+        var registeredDir = Path.GetDirectoryName(Path.GetFullPath(registered));
+        var currentDir = Path.GetDirectoryName(Path.GetFullPath(currentExePath));
+        return registeredDir is not null
+               && currentDir is not null
+               && string.Equals(
+                   registeredDir.TrimEnd(Path.DirectorySeparatorChar),
+                   currentDir.TrimEnd(Path.DirectorySeparatorChar),
+                   StringComparison.OrdinalIgnoreCase)
+               && !string.Equals(
+                   Path.GetFullPath(registered),
+                   Path.GetFullPath(currentExePath),
+                   StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Repairs an autostart entry that points at a path that no longer exists.
+    /// Returns true when the registry value was rewritten.
+    /// </summary>
+    public static bool RepairIfStale(IStartupRegistration registration, string currentExePath)
+    {
+        if (!registration.IsEnabled())
+        {
+            return false;
+        }
+        if (!IsStale(registration.GetCommand(), currentExePath))
+        {
+            return false;
+        }
+        registration.Enable(BuildCommandLine(currentExePath));
+        return true;
+    }
 }

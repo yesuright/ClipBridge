@@ -22,7 +22,7 @@ namespace ClipBridge.Win;
 /// </summary>
 public sealed class TrayContext : ApplicationContext
 {
-    private readonly ClientConfig _config;
+    private ClientConfig _config;
     private readonly IClientLogger _log;
     private readonly AppStatusModel _status;
     private readonly HiddenWindow _hidden;
@@ -46,14 +46,64 @@ public sealed class TrayContext : ApplicationContext
     private System.Windows.Forms.Timer? _deferredClipboardRead;
     private MainWindow? _window;
     private bool _exiting;
+    private bool _suppressNetworkNotice;
+    private readonly bool _showSetupOnStart;
+    private bool _relayComponentMissing;
 
-    public TrayContext(ClientConfig config, IClientLogger logger, AppStatusModel status, SingleInstanceGuard guard)
+    public TrayContext(
+        ClientConfig config,
+        IClientLogger logger,
+        AppStatusModel status,
+        SingleInstanceGuard guard,
+        bool showSetupOnStart = false)
     {
         _config = config;
         _log = logger;
         _status = status;
+        _showSetupOnStart = showSetupOnStart;
 
         AppPaths.EnsureDirectories();
+
+        // ------------------------------------------------------------- relay component + port preflight
+        // Decide the local port BEFORE anything captures it. A stranger's PC may already
+        // have 8787 in use (another ClipBridge, a dev server, a printer tool); the app then
+        // moves the relay instead of showing a permanent, unexplained "Offline".
+        var relayExe = RelayPaths.FindRelayExecutable();
+        var manageRelay = _config.ManageRelay && relayExe is not null;
+        _relayAdmin = new HttpRelayAdminClient(_config.RelayPort, _config.DeviceToken);
+        if (manageRelay)
+        {
+            var resolution = RelayPortResolution.Resolve(
+                _config.RelayPort,
+                PortProbe.IsBindable,
+                QuickRelayHealth,
+                RelayPortResolution.DefaultScanAttempts);
+            if (resolution.Changed && resolution.Resolved)
+            {
+                var updated = _config with
+                {
+                    RelayPort = resolution.Port,
+                    RelayUrl = $"http://127.0.0.1:{resolution.Port}",
+                };
+                if (ConfigStore.TryWrite(updated, AppPaths.ConfigFile, out var writeError))
+                {
+                    _config = updated;
+                    _relayAdmin.UpdatePort(resolution.Port);
+                    _log.Warn($"relay_port_fallback persisted old_port={config.RelayPort} " +
+                              $"new_port={resolution.Port} reason={resolution.Reason}");
+                }
+                else
+                {
+                    // Not persisted: keep the configured port and let the manager report the
+                    // conflict honestly rather than running on a port the next launch forgets.
+                    _log.Error($"relay_port_fallback_persist_failed port={resolution.Port} error={writeError}");
+                }
+            }
+            else if (!resolution.Resolved)
+            {
+                _log.Error($"relay_port_conflict_unresolved reason={resolution.Reason}");
+            }
+        }
 
         _hidden = new HiddenWindow(this);
         _ = _hidden.Handle; // force handle creation so AddClipboardFormatListener registers
@@ -74,31 +124,37 @@ public sealed class TrayContext : ApplicationContext
         _engine.SyncHealthChanged += healthy => _status.Patch(s => s.WithSync(
             _engine.Paused ? SyncState.Paused : (healthy ? SyncState.Active : SyncState.Offline)));
 
-        _relayAdmin = new HttpRelayAdminClient(config.RelayPort, config.DeviceToken);
         _startup = new WindowsStartupRegistration();
 
         // ------------------------------------------------------------- relay child
-        var relayExe = RelayPaths.FindRelayExecutable();
-        if (config.ManageRelay && relayExe is not null)
+        if (manageRelay)
         {
             var spec = new RelayLaunchSpec(
-                relayExe,
-                config.RelayPort,
-                config.DeviceToken,
+                relayExe!,
+                _config.RelayPort,
+                _config.DeviceToken,
                 AppPaths.DatabaseFile,
                 AppPaths.LogsDir);
             _relayManager = new RelayManager(
                 spec,
                 new DefaultRelayProcessFactory(line => WriteRelayOutputLine(line)),
                 _relayAdmin,
-                logger);
+                logger,
+                portFallback: HandlePortConflict,
+                portChanged: OnRelayPortChanged);
             _relayManager.StateChanged += OnRelayStateChanged;
         }
         else
         {
-            if (config.ManageRelay && relayExe is null)
+            if (_config.ManageRelay && relayExe is null)
             {
-                logger.Info("relay_external_mode no packaged relay found (dev build?) — using an externally started relay");
+                // The package is incomplete (relay\ClipBridgeRelay.exe missing) or the user
+                // copied only ClipBridge.exe. Say so instead of showing a silent "Offline".
+                _relayComponentMissing = true;
+                logger.Error(
+                    "relay_component_missing expected=" +
+                    Path.Combine(AppContext.BaseDirectory, "relay", "ClipBridgeRelay.exe"));
+                _status.Patch(s => s.WithRelay(RelayState.Disabled).WithLastError("relay_component_missing"));
             }
             else
             {
@@ -108,17 +164,17 @@ public sealed class TrayContext : ApplicationContext
         }
 
         // ------------------------------------------------------------- network + mDNS
-        _network = new NetworkMonitor(config.RelayPort);
+        _network = new NetworkMonitor(_config.RelayPort, _config.LanIpOverride);
         _network.Changed += OnNetworkChanged;
-        if (config.ManageRelay || relayExe is not null)
+        if (_config.ManageRelay || relayExe is not null)
         {
-            _mdns = new MdnsResponder(config.LanHostname, () => _network.Current.Candidates);
+            _mdns = new MdnsResponder(_config.LanHostname, () => _network.Current.Candidates);
             _mdns.Event += OnMdnsEvent;
         }
 
         // ------------------------------------------------------------- tray menu
         _appearance = new Appearance();
-        _historyClient = new RelayClient(config);
+        _historyClient = new RelayClient(_config);
         using (var stream = typeof(TrayContext).Assembly.GetManifestResourceStream("ClipBridge.Win.Assets.ClipBridge.ico")!)
             _appIcon = new Icon(stream, new Size(32, 32));
         _appStatusItem = new ToolStripMenuItem("Starting…") { Enabled = false };
@@ -138,6 +194,7 @@ public sealed class TrayContext : ApplicationContext
         menu.Items.Add(new ToolStripMenuItem("Check Now", null, (_, _) => CheckNow()));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_copyLanItem);
+        menu.Items.Add(new ToolStripMenuItem("Connection setup…", null, (_, _) => ShowConnectionSetup()));
         menu.Items.Add(new ToolStripMenuItem("Open Logs", null, (_, _) => OpenLogs()));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_autostartItem);
@@ -151,7 +208,7 @@ public sealed class TrayContext : ApplicationContext
             Icon = new Icon(_appIcon, SystemInformation.SmallIconSize),
             Text = "ClipBridge",
             ContextMenuStrip = menu,
-            Visible = config.ShowTrayIcon,
+            Visible = _config.ShowTrayIcon,
         };
         _trayIcon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) OpenWindow(); };
         _trayIcon.DoubleClick += (_, _) => OpenWindow();
@@ -168,6 +225,21 @@ public sealed class TrayContext : ApplicationContext
         // ------------------------------------------------------------- start
         // Component isolation: an optional component (mDNS, network, relay) must never
         // take the daily-use app down. Each start is individually guarded.
+        // A moved/renamed install leaves HKCU\...\Run pointing at a dead path; repair it
+        // here so "Start with Windows" keeps working after the folder is relocated.
+        try
+        {
+            var exe = Program.CurrentExecutablePath();
+            if (StartupManager.RepairIfStale(_startup, exe))
+            {
+                _log.Warn($"startup_entry_repaired new_path={exe}");
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.Warn($"startup_repair_failed error={ex.GetType().Name}");
+        }
+
         try { _engine.StartPolling(); } catch (Exception ex) { logger.Error("engine_start_failed", ex); }
         try { _relayManager?.Start(); } catch (Exception ex) { logger.Error("relay_manager_start_failed", ex); }
         try { _mdns?.Start(); } catch (Exception ex) { logger.Error("mdns_start_failed", ex); }
@@ -175,10 +247,107 @@ public sealed class TrayContext : ApplicationContext
         _status.Patch(s => s
             .With(AppState.Running)
             .WithStartupEnabled(_startup.IsEnabled()));
-        _log.Info($"started device={config.DeviceId} relay={config.RelayUrl} manageRelay={_relayManager is not null}");
-        Notify("ClipBridge is running. ", ToolTipIcon.Info);
-        if (!Environment.GetCommandLineArgs().Contains("--tray-autostart", StringComparer.OrdinalIgnoreCase))
+        _log.Info($"started device={_config.DeviceId} relay={_config.RelayUrl} port={_config.RelayPort} " +
+                  $"manageRelay={_relayManager is not null} lanOverride={(string.IsNullOrEmpty(_config.LanIpOverride) ? "auto" : _config.LanIpOverride)}");
+
+        if (_relayComponentMissing)
+        {
+            Notify("ClipBridge cannot sync: the relay component is missing. Reinstall, or keep the 'relay' folder next to ClipBridge.exe.", ToolTipIcon.Error);
+        }
+        else
+        {
+            Notify("ClipBridge is running. Copy text on either device to move it.", ToolTipIcon.Info);
+        }
+
+        var trayOnly = Environment.GetCommandLineArgs()
+            .Contains("--tray-autostart", StringComparer.OrdinalIgnoreCase);
+        if (_showSetupOnStart)
+        {
+            // First run (or a repaired config): show exactly what the Shortcuts need,
+            // instead of expecting the user to find a JSON file.
+            MarshalToUi(() => { OpenWindow(); ShowConnectionSetup(); });
+        }
+        else if (!trayOnly)
+        {
             MarshalToUi(OpenWindow);
+        }
+    }
+
+    // ---------------------------------------------------------------- relay port fallback
+
+    /// <summary>
+    /// Health probe used only during port preflight. Bounded so a half-open port cannot
+    /// stall startup; "not healthy" simply means "treat the port as taken by someone else".
+    /// </summary>
+    private bool QuickRelayHealth(int port)
+    {
+        if (_relayAdmin.Port != port)
+        {
+            return false;
+        }
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            return _relayAdmin.IsHealthyAsync(cts.Token).GetAwaiter().GetResult();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Runtime port conflict (the port was taken after startup, or the preflight could not
+    /// reserve it). Moves to the next free port, persists it, and tells the user which
+    /// address the Shortcuts now need. Returns null when no fallback is possible.
+    /// </summary>
+    private int? HandlePortConflict(int occupiedPort)
+    {
+        var next = RelayPortResolution.FindFreePort(occupiedPort);
+        if (next is null)
+        {
+            _log.Error($"relay_port_fallback_unavailable port={occupiedPort}");
+            return null;
+        }
+        var updated = _config with
+        {
+            RelayPort = next.Value,
+            RelayUrl = $"http://127.0.0.1:{next.Value}",
+        };
+        if (!ConfigStore.TryWrite(updated, AppPaths.ConfigFile, out var error))
+        {
+            _log.Error($"relay_port_fallback_persist_failed port={next.Value} error={error}");
+            return null;
+        }
+        _config = updated;
+        _log.Warn($"relay_port_fallback applied old_port={occupiedPort} new_port={next.Value}");
+        MarshalToUi(() => Notify(
+            $"Port {occupiedPort} was busy, so ClipBridge moved to {next.Value}. " +
+            "Update the address in both iPhone Shortcuts (Connection setup shows the new one).",
+            ToolTipIcon.Warning));
+        return next;
+    }
+
+    private void OnRelayPortChanged(int port)
+    {
+        try
+        {
+            _relayAdmin.UpdatePort(port);
+        }
+        catch
+        {
+            // admin client races are non-fatal
+        }
+        try
+        {
+            // Refresh the displayed LAN URL without claiming "the network changed".
+            _suppressNetworkNotice = true;
+            _network.UpdatePort(port);
+        }
+        finally
+        {
+            _suppressNetworkNotice = false;
+        }
     }
 
     // ---------------------------------------------------------------- events from hosts
@@ -262,10 +431,13 @@ public sealed class TrayContext : ApplicationContext
             && !e.OldPrimaryUrl.Equals(e.NewPrimaryUrl, StringComparison.Ordinal))
         {
             _status.Patch(s => s.WithNetwork(NetworkState.IpChanged).WithLanIpChanged(true));
-            MarshalToUi(() => Notify(
-                $"Network changed — LAN URL is now {e.NewPrimaryUrl} (update the Shortcut if it uses the old IP).",
-                ToolTipIcon.Warning));
-            _log.Warn($"network_ip_changed old={e.OldPrimaryUrl} new={e.NewPrimaryUrl}");
+            if (!_suppressNetworkNotice)
+            {
+                MarshalToUi(() => Notify(
+                    $"Network changed — LAN URL is now {e.NewPrimaryUrl} (update the Shortcut if it uses the old IP).",
+                    ToolTipIcon.Warning));
+                _log.Warn($"network_ip_changed old={e.OldPrimaryUrl} new={e.NewPrimaryUrl}");
+            }
         }
         else if (!e.LanAvailable)
         {
@@ -366,7 +538,7 @@ public sealed class TrayContext : ApplicationContext
 
     private void ToggleAutostart()
     {
-        var exe = Environment.ProcessPath ?? AppContext.BaseDirectory;
+        var exe = Program.CurrentExecutablePath();
         var wasEnabled = _startup.IsEnabled();
         if (wasEnabled)
         {
@@ -381,6 +553,27 @@ public sealed class TrayContext : ApplicationContext
         _log.Info(wasEnabled ? "startup_disabled" : "startup_enabled");
     }
 
+    /// <summary>
+    /// Shows the address + token the two Shortcuts need. Read-only: it displays the values
+    /// already in use, so opening it never invalidates a working Shortcut.
+    /// </summary>
+    private void ShowConnectionSetup()
+    {
+        if (_exiting)
+        {
+            return;
+        }
+        OpenWindow();
+        using var dialog = new ConnectionSetupDialog(
+            _appearance.Colors,
+            _status.Snapshot.LanUrl ?? _network.Current.PrimaryUrl,
+            _config.DeviceToken,
+            _config.DeviceId,
+            AppPaths.ConfigFile,
+            text => _safeCopy.TryCopy(text));
+        dialog.ShowDialog(_window);
+    }
+
     private void RefreshStartup() => _status.Patch(s => s.WithStartupEnabled(_startup.IsEnabled()));
 
     private void OpenWindow()
@@ -388,7 +581,8 @@ public sealed class TrayContext : ApplicationContext
         if (_exiting) return;
         _window ??= new MainWindow(_status.Snapshot, _appearance, _historyClient,
             new UiActions(ToggleSync, () => _engine.CheckNowAsync(), _safeCopy.TryCopy, ToggleAutostart,
-                RefreshStartup, OpenLogs, OpenDataFolder, () => _relayManager?.Restart()), _config.DeviceId, _appIcon);
+                RefreshStartup, OpenLogs, OpenDataFolder, () => _relayManager?.Restart(), ShowConnectionSetup),
+            _config.DeviceId, _appIcon);
         // The same application menu is also keyboard-accessible from the window
         // (Shift+F10), even when Windows puts the notification icon in its overflow.
         _window.ContextMenuStrip = _trayIcon.ContextMenuStrip;

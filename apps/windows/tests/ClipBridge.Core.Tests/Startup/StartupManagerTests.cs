@@ -11,6 +11,7 @@ public class StartupManagerTests
         public string? Command;
 
         public bool IsEnabled() => Enabled;
+        public string? GetCommand() => Command;
         public void Enable(string commandLine) { Enabled = true; Command = commandLine; }
         public void Disable() { Enabled = false; Command = null; }
     }

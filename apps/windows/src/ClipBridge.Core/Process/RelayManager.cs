@@ -16,7 +16,7 @@ namespace ClipBridge.Core.Process;
 public sealed class RelayManager : IDisposable
 {
     private readonly object _lock = new();
-    private readonly RelayLaunchSpec _spec;
+    private RelayLaunchSpec _spec;
     private readonly IRelayProcessFactory _processFactory;
     private readonly IRelayAdminClient _admin;
     private readonly IClientLogger _log;
@@ -69,7 +69,9 @@ public sealed class RelayManager : IDisposable
         TimeSpan? healthPollInterval = null,
         TimeSpan? successStability = null,
         Func<int, bool>? portProbe = null,
-        TimeSpan[]? recoveryCooldown = null)
+        TimeSpan[]? recoveryCooldown = null,
+        Func<int, int?>? portFallback = null,
+        Action<int>? portChanged = null)
     {
         _spec = spec;
         _processFactory = processFactory;
@@ -82,11 +84,16 @@ public sealed class RelayManager : IDisposable
         _successStability = successStability ?? TimeSpan.FromSeconds(60);
         _portProbe = portProbe ?? PortProbe.IsLoopbackPortOpen;
         _recoveryCooldown = recoveryCooldown ?? DefaultRecoveryCooldown;
+        _portFallback = portFallback;
+        _portChanged = portChanged;
         if (_recoveryCooldown.Length == 0)
         {
             _recoveryCooldown = DefaultRecoveryCooldown;
         }
     }
+
+    private readonly Func<int, int?>? _portFallback;
+    private readonly Action<int>? _portChanged;
 
     private readonly TimeSpan _healthTimeout;
     private readonly TimeSpan _healthPollInterval;
@@ -234,21 +241,50 @@ public sealed class RelayManager : IDisposable
         try
         {
             SetState(RelayState.Starting, null);
-            _log.Info($"relay_starting exe={Path.GetFileName(_spec.ExecutablePath)} port={_spec.Port}");
 
-            // --- port conflict check (no silent port change: the iPhone Shortcut pins 8787)
-            if (_portProbe(_spec.Port))
+            // --- port conflict check
+            // Policy: an already-healthy ClipBridge relay is reused (external/dev case).
+            // Anything else on the port is a conflict. Instead of a permanent Failed state
+            // the manager may ask the host for the next free port once per start attempt;
+            // the host persists it and tells the user, because the Shortcut pins the URL.
+            var port = _spec.Port;
+            var conflicted = _portProbe(port);
+            if (conflicted && await _admin.IsHealthyAsync(ct).ConfigureAwait(false))
             {
-                if (await _admin.IsHealthyAsync(ct).ConfigureAwait(false))
-                {
-                    // A healthy relay is already answering — treat as external relay (dev/startup race).
-                    SetState(RelayState.Running, "external relay already healthy");
-                    _log.Info("relay_external_healthy port busy, using already-running relay");
-                    return;
-                }
-                Fail("port_in_use", $"TCP {_spec.Port} is already in use by another program");
+                // A ClipBridge relay is already answering — treat as external relay (dev/startup race).
+                SetState(RelayState.Running, "external relay already healthy");
+                _log.Info($"relay_external_healthy port={port} busy, using already-running relay");
                 return;
             }
+            if (conflicted && _portFallback is not null)
+            {
+                var fallback = _portFallback(port);
+                if (fallback is int candidate
+                    && candidate != port
+                    && candidate is >= 1 and <= 65535
+                    && !_portProbe(candidate))
+                {
+                    _spec = _spec with { Port = candidate };
+                    conflicted = false;
+                    _log.Warn($"relay_port_fallback old_port={port} new_port={candidate} reason=port_in_use");
+                    port = candidate;
+                    try
+                    {
+                        _portChanged?.Invoke(candidate);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.Warn($"relay_port_fallback_callback_failed error={ex.GetType().Name}");
+                    }
+                }
+            }
+            if (conflicted)
+            {
+                Fail("port_in_use", $"TCP {port} is already in use by another program");
+                return;
+            }
+
+            _log.Info($"relay_starting exe={Path.GetFileName(_spec.ExecutablePath)} port={port}");
 
             IRelayProcess process;
             try

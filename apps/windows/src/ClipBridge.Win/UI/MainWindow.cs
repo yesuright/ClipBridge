@@ -5,7 +5,8 @@ using ClipBridge.Core.Status;
 namespace ClipBridge.Win.UI;
 
 public sealed record UiActions(Action ToggleSync, Func<Task> CheckNow, Func<string, bool> Copy,
-    Action ToggleStartup, Action RefreshStartup, Action OpenLogs, Action OpenData, Action RestartRelay);
+    Action ToggleStartup, Action RefreshStartup, Action OpenLogs, Action OpenData, Action RestartRelay,
+    Action? ShowSetup = null);
 
 /// <summary>Presentation only. The tray ApplicationContext owns this window, never the reverse.</summary>
 public sealed class MainWindow : Form
@@ -158,7 +159,10 @@ public sealed class MainWindow : Form
         _settingsCopy = Button(network, "Copy address", CopyAddress); Set(_settingsCopy, -140, 26, 122, 36);
         var data = Section(346, 84);
         Set(Label(data, "Data & diagnostics", 10, true), 18, 12, 220, 24);
-        _auth = Label(data, "Authentication: Configured", 9, false, true); Set(_auth, 18, 43, 240, 24);
+        _auth = Label(data, "Authentication: Configured · Connection setup", 9, false, true); Set(_auth, 18, 43, 260, 24);
+        _auth.Cursor = Cursors.Hand;
+        _auth.AccessibleName = "Show connection setup";
+        _auth.Click += (_, _) => _actions.ShowSetup?.Invoke();
         var logs = Button(data, "Open logs", () => RunSetting(actions.OpenLogs)); Set(logs, -236, 16, 96, 36);
         var folder = Button(data, "Data folder", () => RunSetting(actions.OpenData)); Set(folder, -132, 16, 114, 36);
         _retryRelay = Button(settings, "Restart relay", actions.RestartRelay); _retryRelay.Visible = false;

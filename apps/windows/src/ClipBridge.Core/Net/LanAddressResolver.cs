@@ -12,10 +12,12 @@ public sealed record LanCandidate(string Name, string Description, string IpAddr
 
 /// <summary>
 /// Pure, unit-testable selection of the best LAN IPv4 for iPhone/iPad Shortcuts
-/// (Milestone 3 .NET port of the Milestone 2 PowerShell heuristics in scripts/lib/LanSetup.psm1):
+/// (.NET port of the Milestone 2 PowerShell heuristics in scripts/lib/LanSetup.psm1):
 /// - private RFC-1918 unicast IPv4 only (no loopback/APIPA/public/multicast)
 /// - excludes VPN tunnels and virtual adapters by description/name keywords and OS virtual flag
-/// - real (physical) adapters are preferred; candidates ordered by priority
+/// - ranks real adapters with a default gateway above isolated/virtual ones, and
+///   Ethernet/Wi-Fi above exotic interface types, instead of assuming "first adapter wins"
+/// - never throws: one broken adapter must not take the whole app down
 /// </summary>
 public static class LanAddressResolver
 {
@@ -68,60 +70,161 @@ public static class LanAddressResolver
 
     /// <summary>
     /// Pure filter over adapter-like objects.
-    /// Input shape (mirrors the M2 PowerShell module):
-    ///   Name, Description, IsUp(bool), IsVirtual(bool), IPv4Addresses(IEnumerable&lt;string&gt;)
-    /// Returns candidates sorted real-first, then by name, then address.
+    /// Input shape: Name, Description, IsUp, IsVirtual, IPv4Addresses, HasGateway, TypeRank.
+    /// Returns candidates best-first: physical before virtual, routed before isolated,
+    /// Ethernet/Wi-Fi before exotic types, then by name and address (stable output).
     /// </summary>
     public static IReadOnlyList<LanCandidate> SelectCandidates(
         IEnumerable<AdapterInfo> adapters, int port = 8787)
     {
+        var list = adapters as IReadOnlyList<AdapterInfo> ?? adapters.ToList();
         var result = new List<LanCandidate>();
-        foreach (var adapter in adapters)
+        foreach (var adapter in list)
         {
             if (!adapter.IsUp) continue;
+            bool virtualOrVpn;
+            try
+            {
+                virtualOrVpn = adapter.IsVirtual
+                    || IsLikelyVirtualOrVpn(adapter.Description, adapter.Name, adapter.IsVirtual);
+            }
+            catch
+            {
+                virtualOrVpn = true; // a broken adapter is never the best answer
+            }
             foreach (var raw in adapter.IPv4Addresses.Distinct())
             {
                 var ip = raw.Trim();
                 if (!IsPrivateIpv4(ip)) continue;
-                if (IsLikelyVirtualOrVpn(adapter.Description, adapter.Name, adapter.IsVirtual)) continue;
+                if (virtualOrVpn) continue;
                 result.Add(new LanCandidate(adapter.Name, adapter.Description, ip, adapter.IsVirtual, port));
             }
         }
+
         return result
             .OrderBy(c => c.IsVirtual)
+            .ThenBy(c => GatewayRank(list, c))
+            .ThenBy(c => TypeRank(list, c))
             .ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(c => c.IpAddress, StringComparer.Ordinal)
             .ToList();
+    }
+
+    private static int GatewayRank(IEnumerable<AdapterInfo> adapters, LanCandidate candidate)
+    {
+        foreach (var adapter in adapters)
+        {
+            if (string.Equals(adapter.Name, candidate.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                return adapter.HasGateway ? 0 : 1;
+            }
+        }
+        return 1;
+    }
+
+    private static int TypeRank(IEnumerable<AdapterInfo> adapters, LanCandidate candidate)
+    {
+        foreach (var adapter in adapters)
+        {
+            if (string.Equals(adapter.Name, candidate.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                return Math.Clamp(adapter.TypeRank, 0, 9);
+            }
+        }
+        return 2;
+    }
+
+    /// <summary>
+    /// Puts an explicitly configured IP first when it is still present on this machine.
+    /// Returns the input order unchanged when the preference is absent (the adapter is
+    /// unplugged, DHCP gave it a different address, …) — a stale override must never
+    /// hide a working address.
+    /// </summary>
+    public static IReadOnlyList<LanCandidate> PreferIp(IReadOnlyList<LanCandidate> candidates, string? preferredIp)
+    {
+        if (candidates.Count <= 1 || string.IsNullOrWhiteSpace(preferredIp))
+        {
+            return candidates;
+        }
+        var preferred = candidates.FirstOrDefault(
+            c => string.Equals(c.IpAddress, preferredIp.Trim(), StringComparison.Ordinal));
+        if (preferred is null)
+        {
+            return candidates;
+        }
+        var reordered = new List<LanCandidate>(candidates.Count) { preferred };
+        reordered.AddRange(candidates.Where(c => !ReferenceEquals(c, preferred)));
+        return reordered;
     }
 
     /// <summary>Enumerate the real Windows interfaces and run the same filter.</summary>
     public static IReadOnlyList<LanCandidate> DiscoverCandidates(int port = 8787)
     {
         var adapters = new List<AdapterInfo>();
-        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+        NetworkInterface[] nics;
+        try
         {
-            if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback
-                || nic.NetworkInterfaceType == NetworkInterfaceType.Tunnel)
+            nics = NetworkInterface.GetAllNetworkInterfaces();
+        }
+        catch
+        {
+            return Array.Empty<LanCandidate>(); // no usable network stack — treated as "no LAN"
+        }
+
+        foreach (var nic in nics)
+        {
+            try
             {
-                continue; // loopback + tunnel interfaces are never LAN candidates
+                if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback
+                    || nic.NetworkInterfaceType == NetworkInterfaceType.Tunnel)
+                {
+                    continue; // loopback + tunnel interfaces are never LAN candidates
+                }
+                var isUp = nic.OperationalStatus == OperationalStatus.Up;
+                var properties = nic.GetIPProperties();
+                var addresses = properties.UnicastAddresses
+                    .Where(u => u.Address.AddressFamily == AddressFamily.InterNetwork)
+                    .Select(u => u.Address.ToString())
+                    .ToList();
+                if (addresses.Count == 0)
+                {
+                    continue;
+                }
+                var hasGateway = properties.GatewayAddresses.Any(g =>
+                    g.Address.AddressFamily == AddressFamily.InterNetwork
+                    && !g.Address.Equals(IPAddress.Any)
+                    && !g.Address.Equals(IPAddress.None));
+                adapters.Add(new AdapterInfo(
+                    nic.Name,
+                    nic.Description,
+                    isUp,
+                    IsLikelyVirtualOrVpn(nic.Description, nic.Name, IsTypeVirtual(nic)),
+                    addresses,
+                    hasGateway,
+                    RankOf(nic.NetworkInterfaceType)));
             }
-            var isUp = nic.OperationalStatus == OperationalStatus.Up;
-            var addresses = nic.GetIPProperties().UnicastAddresses
-                .Where(u => u.Address.AddressFamily == AddressFamily.InterNetwork)
-                .Select(u => u.Address.ToString());
-            adapters.Add(new AdapterInfo(
-                nic.Name,
-                nic.Description,
-                isUp,
-                IsLikelyVirtualOrVpn(nic.Description, nic.Name, IsVirtualType(nic)),
-                addresses));
+            catch
+            {
+                // A single flaky/disconnected adapter (common with VPN clients and docking
+                // stations) must not abort discovery or crash the app at startup.
+            }
         }
         return SelectCandidates(adapters, port);
     }
 
-    private static bool IsVirtualType(NetworkInterface nic)
+    private static bool IsTypeVirtual(NetworkInterface nic)
         => nic.NetworkInterfaceType is NetworkInterfaceType.Loopback
             or NetworkInterfaceType.Tunnel;
+
+    /// <summary>Lower is better: the two interface types people actually use come first.</summary>
+    private static int RankOf(NetworkInterfaceType type) => type switch
+    {
+        NetworkInterfaceType.Ethernet or NetworkInterfaceType.GigabitEthernet
+            or NetworkInterfaceType.FastEthernetT or NetworkInterfaceType.FastEthernetFx
+            or NetworkInterfaceType.Wireless80211 => 0,
+        NetworkInterfaceType.Unknown => 2,
+        _ => 1,
+    };
 
     /// <summary>First usable candidate, or null when the machine has no LAN address.</summary>
     public static LanCandidate? Primary(in IReadOnlyList<LanCandidate> candidates)
@@ -137,4 +240,6 @@ public sealed record AdapterInfo(
     string Description,
     bool IsUp,
     bool IsVirtual,
-    IEnumerable<string> IPv4Addresses);
+    IEnumerable<string> IPv4Addresses,
+    bool HasGateway = false,
+    int TypeRank = 1);

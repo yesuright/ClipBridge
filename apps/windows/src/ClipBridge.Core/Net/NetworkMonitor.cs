@@ -13,16 +13,22 @@ public sealed record NetworkStatus(
 public sealed record NetworkChangedEventArgs(string? OldPrimaryUrl, string? NewPrimaryUrl, bool LanAvailable);
 
 /// <summary>
-/// Event-driven LAN availability watcher (Milestone 3). Subscribes to
+/// Event-driven LAN availability watcher. Subscribes to
 /// <see cref="NetworkChange.NetworkAddressChanged"/> / <see cref="NetworkChange.NetworkAvailabilityChanged"/>
 /// — never enumerates adapters on a timer. <see cref="ForceRefresh"/> is called on resume
-/// (sleep/wake) and after a manual "check now".
+/// (sleep/wake), after a manual "check now", and after a relay port fallback.
+///
+/// Portability notes: the port is retargetable (the relay can move when the configured
+/// port is taken), an explicit IP preference is honoured when that address still exists,
+/// and evaluation never throws — Windows raises these events from arbitrary threads and
+/// an exception there would take the process down.
 /// </summary>
 public interface INetworkMonitor : IDisposable
 {
     event Action<NetworkChangedEventArgs>? Changed;
     NetworkStatus Current { get; }
     void ForceRefresh();
+    void UpdatePort(int port);
 }
 
 public sealed class NetworkMonitor : INetworkMonitor
@@ -30,19 +36,25 @@ public sealed class NetworkMonitor : INetworkMonitor
     private readonly object _lock = new();
     private NetworkStatus _current = new(Array.Empty<LanCandidate>(), null);
     private bool _disposed;
+    private int _port;
+    private string? _preferredIp;
 
     public event Action<NetworkChangedEventArgs>? Changed;
 
-    public NetworkMonitor(int port = 8787)
+    public NetworkMonitor(int port = 8787, string? preferredIp = null)
     {
-        Port = port;
+        _port = port;
+        _preferredIp = string.IsNullOrWhiteSpace(preferredIp) ? null : preferredIp.Trim();
         NetworkChange.NetworkAddressChanged += OnNetworkChanged;
         NetworkChange.NetworkAvailabilityChanged += OnNetworkChanged;
         // Initial evaluation (cheap, one-shot at startup).
         ForceRefresh();
     }
 
-    public int Port { get; }
+    public int Port
+    {
+        get { lock (_lock) { return _port; } }
+    }
 
     public NetworkStatus Current
     {
@@ -55,22 +67,70 @@ public sealed class NetworkMonitor : INetworkMonitor
         }
     }
 
+    /// <summary>Follows a relay port change so every displayed URL stays correct.</summary>
+    public void UpdatePort(int port)
+    {
+        lock (_lock)
+        {
+            if (_port == port)
+            {
+                return;
+            }
+            _port = port;
+        }
+        ForceRefresh();
+    }
+
+    public void SetPreferredIp(string? ip)
+    {
+        lock (_lock)
+        {
+            _preferredIp = string.IsNullOrWhiteSpace(ip) ? null : ip.Trim();
+        }
+        ForceRefresh();
+    }
+
     public void ForceRefresh()
     {
-        var old = Current;
-        var candidates = LanAddressResolver.DiscoverCandidates(Port);
-        var primary = LanAddressResolver.Primary(candidates);
-        var next = new NetworkStatus(candidates, primary?.Url);
+        NetworkStatus next;
+        try
+        {
+            int port;
+            string? preferred;
+            lock (_lock)
+            {
+                port = _port;
+                preferred = _preferredIp;
+            }
+            var candidates = LanAddressResolver.PreferIp(
+                LanAddressResolver.DiscoverCandidates(port), preferred);
+            var primary = LanAddressResolver.Primary(candidates);
+            next = new NetworkStatus(candidates, primary?.Url);
+        }
+        catch
+        {
+            // Never let adapter enumeration break the app; "no LAN" is a valid state.
+            next = new NetworkStatus(Array.Empty<LanCandidate>(), null);
+        }
 
+        var old = Current;
         bool changed;
         lock (_lock)
         {
             changed = !EqualsString(old.PrimaryUrl, next.PrimaryUrl);
             _current = next;
         }
-        if (changed)
+        if (!changed)
+        {
+            return;
+        }
+        try
         {
             Changed?.Invoke(new NetworkChangedEventArgs(old.PrimaryUrl, next.PrimaryUrl, next.LanAvailable));
+        }
+        catch
+        {
+            // A subscriber failing must not kill the network-change thread.
         }
     }
 

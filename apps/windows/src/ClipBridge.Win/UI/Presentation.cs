@@ -13,6 +13,10 @@ public sealed record StatusPresentation(string Title, string Explanation, bool C
             return new("Starting…", "Starting ClipBridge…", false);
         if (s.Relay == RelayState.Restarting)
             return new("Relay restarting…", "Clipboard sync will resume automatically.", false);
+        // A partially copied/installed build must say what is wrong, not pretend "Offline".
+        if (string.Equals(s.LastError, "relay_component_missing", StringComparison.Ordinal))
+            return new("Relay component missing",
+                "Reinstall ClipBridge so the 'relay' folder sits next to ClipBridge.exe.", false);
         if (s.App != AppState.Running || s.Relay is RelayState.Failed or RelayState.Stopped || s.Sync == SyncState.Offline)
             return new("Offline", "Unable to reach the relay. Check your connection.", false);
         if (s.Sync == SyncState.Paused)

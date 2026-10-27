@@ -494,7 +494,7 @@ public sealed class SyncEngine : IDisposable
         {
             HttpRequestException http => $"http_error:{(int)(http.StatusCode ?? 0)}",
             TaskCanceledException => "timeout",
-            RelayApiException api => $"relay_{api.StatusCode}:{api.ErrorCode}",
+            RelayApiException api => $"relay_{api.StatusCode}:{api.ErrorCode} path={api.RequestPath}",
             _ => ex.Message,
         };
         return message.Replace("\r", " ").Replace("\n", " ");
