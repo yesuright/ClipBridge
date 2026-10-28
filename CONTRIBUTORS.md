@@ -1,8 +1,9 @@
 # Contributors
 
-This file is maintained by hand. GitHub's automatic contributors graph is generated from
-commit authorship by GitHub accounts; AI tools do not get their own entries there (there
-is no bot account to attribute commits to), so the attribution below complements it.
+This file is maintained by hand. GitHub's contributors graph is generated from commit
+attribution, and in this repository all commits are attributed to yesuright; the
+development-assistance contribution of OpenAI Codex is therefore acknowledged here
+separately.
 
 ## Project maintainer
 
