@@ -392,6 +392,14 @@ Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) 
 build/test checklist. Please keep the security invariants (no tokens/clipboard content in
 logs, no new outbound services) and run the test suites before submitting.
 
+## Credits
+
+- **Project maintainer**: [yesuright](https://github.com/yesuright) — product direction,
+  development, review and releases.
+- **AI-assisted development**: developed with the assistance of
+  [OpenAI Codex](https://openai.com/codex/), an AI coding tool by OpenAI, under the
+  maintainer's direction and review. See [CONTRIBUTORS.md](CONTRIBUTORS.md).
+
 ## License
 
 Released under the [MIT License](LICENSE) — Copyright (c) 2026 yesuright. Third-party

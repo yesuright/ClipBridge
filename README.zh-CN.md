@@ -318,6 +318,13 @@ ClipBridge 是作者日常在用的工具，会按实际需要持续维护。以
 Issue 与 PR 欢迎，构建/测试清单见 [CONTRIBUTING.md](CONTRIBUTING.md)。请保持安全不变量
 （日志不含 token/正文、不新增对外服务），提交前跑完测试套件。
 
+## 致谢
+
+- **项目维护者**：[yesuright](https://github.com/yesuright)——产品方向、开发、评审与发布。
+- **AI 辅助开发**：本项目在维护者的主导与评审下，借助 OpenAI 的 AI 编程工具
+  [OpenAI Codex](https://openai.com/codex/) 辅助开发。详见
+  [CONTRIBUTORS.md](CONTRIBUTORS.md)。
+
 ## 许可证
 
 本项目以 [MIT License](LICENSE) 发布——Copyright (c) 2026 yesuright。第三方依赖沿用各自
