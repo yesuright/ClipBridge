@@ -230,8 +230,11 @@ $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
 $subsystem = [BitConverter]::ToUInt16($bytes, $peOffset + 24 + 68)
 Assert-True ($subsystem -eq 2) 'A: exe is a GUI subsystem binary (no console window)' "subsystem=$subsystem"
 Assert-True ($subsystem -ne 3) 'A: not a console binary' "subsystem=$subsystem"
-Assert-True ([Reflection.AssemblyName]::GetAssemblyName((Join-Path $Artifact 'ClipBridge.dll')).Version.Major -eq 0 -and
-    [Reflection.AssemblyName]::GetAssemblyName((Join-Path $Artifact 'ClipBridge.dll')).Version.Minor -ge 4) 'A: M4 Windows UI assembly packaged'
+# The Milestone-4 UI build started at 0.4.0 and the product has since moved to 1.x, so assert
+# a floor instead of a version band (the previous `Major -eq 0` check failed on 1.0.0 even
+# though the packaged assembly was the right one).
+$uiVersion = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $Artifact 'ClipBridge.dll')).Version
+Assert-True ($uiVersion -ge [version]'0.4.0') 'A: M4 Windows UI assembly packaged' "version=$uiVersion"
 
 # Sign-in uses a launch argument, not a standalone registry command. Exercise it with
 # this harness's existing isolated instance id; do not modify the user's Run entry.
