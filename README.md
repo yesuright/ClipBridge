@@ -11,7 +11,7 @@ around HTTP proxies.
 
 ```text
 Windows  Ctrl+C ──►  ClipBridge client ──► local Relay ──► SQLite
-iPhone "Get from ClipBridge" ─────────────► local Relay ──► Windows clipboard (a few seconds)
+iPhone "Get from ClipBridge" ─────────────► local Relay ──► iPhone clipboard (a few seconds)
 
 iPhone copy ──► "Send to ClipBridge" ──► local Relay ──► Windows clipboard (a few seconds)
 ```
@@ -179,7 +179,7 @@ Closing the window only hides it — sync keeps running in the tray.
 │                                                             │      │ iPhone  │
 │  ClipBridge.exe (tray, .NET 8, self-contained)              │      │         │
 │   ├── clipboard listener → POST /api/v1/clips               │      │Shortcut │
-│   ├── poll /api/v1/clips/latest (2 s) → write clipboard     │      │  Send   │
+│   ├── poll /api/v1/clips?limit=20 (2 s) → write clipboard   │      │  Send   │
 │   └── manages ──► relay\ClipBridgeRelay.exe (PyInstaller)   │      │  Get    │
 │                     FastAPI + SQLite, 0.0.0.0:8787  ◄───────┼──────┴─────────┘
 │                     latest clip + 50-item history           │   same trusted LAN,

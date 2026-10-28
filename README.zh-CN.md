@@ -10,7 +10,7 @@ iOS 剪贴板之间互传，走你自己的 Wi-Fi：一边复制，另一边粘�
 
 ```text
 Windows  Ctrl+C ──►  ClipBridge 客户端 ──► 本机 Relay ──► SQLite
-iPhone「Get from ClipBridge」──────────► 本机 Relay ──► Windows 剪贴板（几秒内）
+iPhone「Get from ClipBridge」──────────► 本机 Relay ──► 手机剪贴板（几秒内）
 
 iPhone 复制 ──►「Send to ClipBridge」──► 本机 Relay ──► Windows 剪贴板（几秒内）
 ```
@@ -145,7 +145,7 @@ ClipBridge 保留同样的使用习惯，但数据只在你的设备之间：
 ┌────────────────────────── Windows ──────────────────────────┐      ┌─────────┐
 │  ClipBridge.exe（托盘，.NET 8，self-contained）              │      │ iPhone  │
 │   ├── 剪贴板监听 → POST /api/v1/clips                       │      │快捷指令 │
-│   ├── 每 2 秒轮询 /api/v1/clips/latest → 写入剪贴板          │      │  Send   │
+│   ├── 每 2 秒轮询 /api/v1/clips?limit=20 → 写入剪贴板        │      │  Send   │
 │   └── 管理 ──► relay\ClipBridgeRelay.exe（PyInstaller）      │      │  Get    │
 │                  FastAPI + SQLite，0.0.0.0:8787   ◄──────────┼──────┴─────────┘
 │                  保存最新一条 + 最近 50 条历史               │   同一可信局域网

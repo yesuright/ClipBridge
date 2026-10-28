@@ -1,26 +1,27 @@
-# ClipBridge Security (Milestone 2)
+# ClipBridge Security
 
 This is a personal tool whose payloads can contain prompts, code, logs, private text.
-The security baseline below is in place from day 1; deeper measures (E2E encryption) are a
-deliberate future milestone and are **not** implemented yet.
+The security baseline below describes v1.0.0 as implemented; deeper measures (E2E
+encryption) are deliberate future work and are **not** implemented yet.
 
 ## 1. Threat model
 
-In scope for M1 (what we protect against):
+In scope (what we protect against):
 
 | Threat | Mitigation |
 | --- | --- |
-| Random/unauthenticated clients flooding or reading the relay | Shared secret bearer token; **all** `/api/v1` endpoints enforce it; constant-time comparison |
+| Random/unauthenticated clients flooding or reading the relay | Shared secret bearer token; **all** `/api/v1` endpoints except `/api/v1/health` (liveness fields only, no user data) enforce it; constant-time comparison |
 | Clipboard content leaking into logs | Logs contain only `clip_id`, `device_id`, size, hash prefix (8 chars), status — never content, never tokens; enforced by convention + tests |
 | Secrets committed to Git | `.env`/`.env.*` gitignored (except `.env.example`); `scripts/secret-scan.ps1` pre-commit check |
 | Huge payloads exhausting memory | Content limit 2 MiB (UTF-8 bytes) + HTTP body guard 16 MiB |
 | Corrupt/tampered clips on the wire | Server recomputes SHA-256; client verifies hash before applying to clipboard |
 | Clipboard churn/loops from own writes | Loop-prevention layers (see PROTOCOL.md §7) |
 
-Assumed/declared out of scope for M1:
+Assumed/declared out of scope:
 
-- **Network attacker**: dev transport is HTTP localhost. Production MUST be HTTPS;
-  plaintext Internet transport is **not** a supported production mode.
+- **Network attacker**: transport is plain HTTP on a trusted LAN (§4.2). Plaintext Internet
+  transport is **not** a supported production mode — production or remote use MUST use
+  HTTPS or an equivalent secure tunnel.
 - **Relay server compromise**: the relay can read plaintext clip content today. It is trusted
   as an honest-but-curious storage node, not an E2E-protected one.
 - **Malicious relay / MITM at HTTPS termination**: future E2E encryption.
@@ -30,10 +31,19 @@ Assumed/declared out of scope for M1:
 
 ## 2. Token handling
 
-- Relay: `CLIPBRIDGE_TOKEN` env var or `services/relay/.env` (gitignored). **Fail-fast** when
-  missing — there is no default secret and no ephemeral-token fallback in production mode.
-- Client: `CLIPBRIDGE_DEVICE_TOKEN` env var or `%APPDATA%\ClipBridge\config.json`
-  (gitignored — outside the repo by construction). Client refuses to run without it.
+- Standalone relay: `CLIPBRIDGE_TOKEN` env var or `services/relay/.env` (gitignored).
+  **Fail-fast** when missing (the relay exits before binding) — there is no default secret
+  and the relay never generates a token itself; `.env.example` shows how to create one
+  (`python -c "import secrets; print(secrets.token_hex(32))"`).
+- Packaged Windows client: on first start it **provisions its own access token
+  automatically** — 256 bits from the OS CSPRNG (`ConfigBootstrap.cs`, `TokenGenerator.cs`),
+  together with a device id and an mDNS hostname, written atomically to
+  `%APPDATA%\ClipBridge\config.json` (gitignored — outside the repo by construction). Later
+  starts restore those values unchanged; an existing valid config is never re-tokenized. A
+  corrupt config is backed up and then replaced. The client refuses to run only when its
+  configuration cannot be read or written — it never destroys a token it cannot see.
+  `CLIPBRIDGE_DEVICE_TOKEN` (environment) overrides the stored token for one launch and is
+  never persisted.
 - Not allowed: hardcoded tokens in source, tokens in Git, tokens in logs, tokens in URLs
   (headers only, so they never appear in access logs/path lines).
 - The supplied token in a failed auth attempt is never echoed back in the 401 body.
@@ -54,16 +64,28 @@ tokens because auth is header-based and clip content is in the body, never the U
 
 ## 4. Network: localhost vs LAN vs HTTPS
 
-### 4.1 Localhost (default, safe)
+### 4.1 Two run modes, two defaults
 
-`CLIPBRIDGE_BIND_HOST=127.0.0.1` (default; the Milestone 1 alias `CLIPBRIDGE_HOST`
-still works). Reachable from this machine only. This is the ONLY default — the relay
-**never** exposes the LAN without an explicit configuration change.
+ClipBridge's relay runs in one of two modes, with intentionally different defaults:
 
-### 4.2 LAN plain HTTP — trusted local-network development / personal-use mode ONLY
+- **Standalone relay (development: `python run.py` in `services/relay/`)** — binds
+  `127.0.0.1:8787` by default (`CLIPBRIDGE_BIND_HOST=127.0.0.1`; the early
+  `CLIPBRIDGE_HOST` alias still works). Reachable from this machine only. In this mode
+  loopback is the ONLY default — LAN exposure requires an explicit configuration change.
+- **Managed relay (the packaged Windows client)** — the tray client starts the relay as a
+  child process and sets `CLIPBRIDGE_BIND_HOST=0.0.0.0` for it (`RelayProcess.cs`), so
+  iPhone/iPad Shortcuts on the same LAN can reach it. This is the shipped product's
+  intended default: `0.0.0.0:8787`, or the next free port when 8787 is busy (persisted,
+  with a tray notice). The client itself always talks to the relay over loopback
+  (`http://127.0.0.1:<port>`).
 
-iPhone/iPad Shortcuts need to reach the PC, so Milestone 2 adds an explicit LAN mode:
-`CLIPBRIDGE_BIND_HOST=0.0.0.0` (or a specific private LAN interface). Positioning:
+Both modes enforce the same bearer-token auth and the same LAN warnings (§4.2).
+
+### 4.2 LAN plain HTTP — trusted local-network, personal-use mode ONLY
+
+iPhone/iPad Shortcuts need to reach the PC, so the managed relay binds `0.0.0.0` by design
+and a standalone relay can be switched to `CLIPBRIDGE_BIND_HOST=0.0.0.0` (or a specific
+private LAN interface). Positioning:
 
 - The bearer token **travels unencrypted over plain HTTP** on your LAN. It is not
   transport-encrypted in any way. Anyone on the same network who can sniff frames
@@ -74,8 +96,8 @@ iPhone/iPad Shortcuts need to reach the PC, so Milestone 2 adds an explicit LAN 
 - Production or any remote usage MUST use HTTPS or an equivalent secure tunnel
   (TLS-terminating reverse proxy, VPN such as Tailscale/WireGuard, or SSH tunnel).
   The protocol is transport-agnostic: a `https://` base URL is a config change only.
-- This LAN mode is **not** the final security story — it exists so three personal
-  devices can be tested on one trusted Wi-Fi. See §7 for the E2E-encryption direction.
+- This LAN mode is **not** the final security story — it exists so a few personal
+  devices can sync on one trusted Wi-Fi. See §7 for the E2E-encryption direction.
 - The relay prints a prominent warning when it starts bound to a non-loopback
   address; the LAN helper scripts repeat it and never print the token.
 
@@ -98,10 +120,10 @@ NOT SUPPORTED: plain-HTTP LAN is a local-network convenience, not an Internet mo
   exfil of rich content).
 - The client writes remote clips into the system clipboard **immediately** — treat the clipboard
   as sensitive; do not run this tool on shared machines.
-- Long prompts are stored server-side in plaintext (SQLite file). The DB is local-only in M1;
+- Long prompts are stored server-side in plaintext (SQLite file). The DB is local-only;
   restrict file permissions / protect the disk as you would any personal data.
 
-## 6. Known limitations (M2)
+## 6. Known limitations
 
 - Shared token for all devices — no per-device keys; anyone with the token can read/write all
   history. (Personal use, single trust boundary.)
@@ -124,9 +146,9 @@ NOT SUPPORTED: plain-HTTP LAN is a local-network convenience, not an Internet mo
 - Relay would store opaque blobs; it keeps `clip_id`, `device_id`, sizes, hashes (of ciphertext)
   for routing/dedup but learns nothing about plaintext.
 - Key distribution for 3 personal devices: manual export of a shared base key via Shortcuts /
-  config file, or a simple PAKE pairing flow. This is a **future** milestone — deliberately
-  not implemented now to avoid a half-baked crypto scheme; today's plaintext default is
-  documented and local-only.
+  config file, or a simple PAKE pairing flow. This is **future** work — deliberately
+  not implemented now to avoid a half-baked crypto scheme; today's plaintext LAN transport
+  is documented and restricted to a trusted network.
 
 ## 8. Secret scanning
 
@@ -134,12 +156,12 @@ NOT SUPPORTED: plain-HTTP LAN is a local-network convenience, not an Internet mo
 assignments with long values, and inline `Bearer <long-token>` literals. Run it before commit:
 `powershell -ExecutionPolicy Bypass -File scripts/secret-scan.ps1` (it exits non-zero on hits).
 
-## 9. Milestone 3 additions (daily-use productization)
+## 9. The shipped product (v1.0.0)
 
-- **Artifact (no installer, no signing)**: the daily build is a folder of binaries
-  (`artifacts\ClipBridge\`). It is unsigned — Windows SmartScreen may warn on first run
-  ("More info → Run anyway"). Signing is a deliberate future milestone; do not bypass
-  security warnings on untrusted copies.
+- **Artifact (no installer, no signing)**: the release ships as a self-contained archive
+  (`ClipBridge-v1.0.0-win-x64.zip`: tray client, PyInstaller relay, documentation). It is
+  unsigned — Windows SmartScreen may warn on first run ("More info → Run anyway").
+  Signing is deliberate future work; do not bypass security warnings on untrusted copies.
 - **Secret handling is unchanged**: the token still lives in
   `%APPDATA%\ClipBridge\config.json` (OS-user protected; never in the repo, never in logs).
   The tray passes it to the relay child **via the child's environment** (same trust level as
@@ -153,15 +175,15 @@ assignments with long values, and inline `Bearer <long-token>` literals. Run it 
   (trusted private network only; see §4.2). The responder is in-app: no Bonjour/third-party
   daemon is installed, and it stops when the app exits. The name is only a convenience
   address — the API's protection (bearer token, plain-HTTP-LAN caveats) is unchanged.
-- **`POST /api/v1/admin/shutdown`** (additive, M3): an authenticated internal stop switch
-  for graceful shutdown by the tray client. It requires the same shared token — anyone who
+- **`POST /api/v1/admin/shutdown`**: an authenticated internal stop switch for graceful
+  shutdown by the tray client. It requires the same shared token — anyone who
   can already read/write clips can also stop the relay. No anonymous access, no effect on
   the stored data.
 - **Startup registration**: user-level `HKCU\...\Run` only (no admin, reversible, per-user).
   Default OFF; explicit opt-in via tray menu or CLI.
 - **Relay child lifecycle**: the relay runs as a child of the tray app with a Job Object
   (kill-on-close) — the OS guarantees no orphan process survives the client, even on a
-  client crash. The relay listens on `0.0.0.0:8787` in managed mode (LAN mode), which is the
-  same exposure as the previous `start-lan-dev.ps1` daily setup — trusted private network
-  only (see §4.2). Do NOT forward 8787 at the router.
+  client crash. In managed mode the relay listens on `0.0.0.0:8787` (or the next free
+  port; see §4.1) — trusted private network only (see §4.2). Do NOT forward 8787 at the
+  router.
 

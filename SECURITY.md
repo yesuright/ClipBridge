@@ -23,10 +23,10 @@ you prefer otherwise.
 
 ## Security model in one minute
 
-- **Auth**: every `/api/v1/*` endpoint requires a 256-bit random bearer token generated
-  per install, compared in constant time. The only unauthenticated endpoints are
-  `/api/v1/health` (a status string, no user data), the root `/` and the Swagger UI at
-  `/docs` (API shape only).
+- **Auth**: every `/api/v1/*` endpoint except `/api/v1/health` requires a 256-bit random
+  bearer token generated per install, compared in constant time. The only unauthenticated
+  endpoints are `/api/v1/health` (returns only `status` / `service` / `version` —
+  no user data), the root `/` and the Swagger UI at `/docs` (API shape only).
 - **Transport**: plain HTTP on your LAN. The token and clipboard text are not encrypted
   in transit. This is the documented trade-off of the current release — trusted private
   networks only, never the public internet, never router port-forwarding.
@@ -38,9 +38,12 @@ you prefer otherwise.
   line or config files inside the install folder.
 - **System changes**: ClipBridge never modifies firewall, proxy or VPN settings and never
   forwards ports.
-- **No telemetry**: neither component ships an analytics, crash-reporting or telemetry SDK,
-  and the only outbound HTTP requests go to the relay address you configured (loopback or
-  your own LAN). There is no update check, no usage reporting and no third-party endpoint.
+- **No telemetry**: ClipBridge does not configure or transmit usage analytics or telemetry
+  to third-party services, and the only outbound HTTP requests go to the relay address you
+  configured (loopback or your own LAN). There is no update check, no usage reporting and no
+  third-party endpoint. (The bundled relay environment contains an `opentelemetry-api`
+  package inherited from the FastAPI dependency tree as a build-environment residual;
+  ClipBridge code never imports it and no telemetry SDK or exporter is included.)
 - **Data at rest**: clipboard text is stored unencrypted in a local SQLite file under the
   user's profile; the token sits in the user's config file. Both rely on standard
   Windows account isolation.
