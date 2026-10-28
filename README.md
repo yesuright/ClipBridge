@@ -305,8 +305,11 @@ never the token).
 
 ## Building from source
 
-Prerequisites: **.NET 8 SDK** and **Python 3.12+** (3.13 tested). Windows PowerShell 5.1
-is the tested shell for the scripts.
+Prerequisites: **.NET 8 SDK 8.0.427 or newer** and **Python 3.12+** (3.13 tested). Windows
+PowerShell 5.1 is the tested shell for the scripts. The SDK version is not cosmetic: a
+self-contained publish takes the runtime from the SDK, and
+`scripts/build-daily.ps1` refuses to package a runtime older than 8.0.33
+(see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)).
 
 ```powershell
 # 1. Relay (dev run, loopback only) — start from the repo root
@@ -363,6 +366,24 @@ docs/                architecture, protocol, security, development, daily-use, p
 scripts/             build / verify / dev helpers (Windows PowerShell)
 tests/e2e/           full-stack end-to-end script (real clipboard + simulated phone flows)
 ```
+
+## Roadmap
+
+ClipBridge is maintained as a tool its author uses daily. Everything below is a plan, not
+a shipped feature — no dates are promised, and [CHANGELOG.md](CHANGELOG.md) is the record
+of what actually shipped.
+
+- **Near term — migrate to .NET 10 LTS.** .NET 8 leaves support on **2026-11-10**. v1.0.0
+  ships the last .NET 8 security patch (8.0.33 runtime, self-contained), which keeps the
+  current release supported in the meantime; moving the Windows client to .NET 10 LTS is
+  the highest-priority follow-up.
+- **Next — proxy and VPN friendliness.** Sync currently needs a manual `NO_PROXY` entry
+  when a machine-wide HTTP proxy is configured. The goal is to work out of the box in
+  those environments without changing the user's proxy settings.
+- **Next — build, diagnostics and logging.** Reproducible release builds that record the
+  toolchain they used, and diagnostics that are easier to attach to a bug report.
+- **Longer term — first-run setup and everyday use.** Fewer steps from download to first
+  sync, and small refinements to the tray UI.
 
 ## Contributing
 

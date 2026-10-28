@@ -5,7 +5,7 @@
 | Tool | Version | Where |
 | --- | --- | --- |
 | Git | 2.x | any |
-| .NET SDK | 8.0 (LTS) | https://dotnet.microsoft.com/download (or `dotnet-install.ps1 -Channel 8.0 -InstallDir $env:USERPROFILE\.dotnet`; `scripts/dev-client.ps1` and `tests/e2e/run-end-to-end.ps1` automatically prefer `%USERPROFILE%\.dotnet\dotnet.exe`) |
+| .NET SDK | 8.0.427+ (8.0.4xx band) | https://dotnet.microsoft.com/download (or `dotnet-install.ps1 -Version 8.0.427 -InstallDir $env:USERPROFILE\.dotnet`; `scripts/dev-client.ps1` and `tests/e2e/run-end-to-end.ps1` automatically prefer `%USERPROFILE%\.dotnet\dotnet.exe`) |
 | Python | 3.12+ (3.13 tested) | https://www.python.org |
 
 > Network note: if nuget.org is slow on your network (common in CN), the repo ships a
@@ -18,7 +18,13 @@
 > run of this repo added a `huawei` source to the user-level config, it is safe to
 > delete that line; the backup lives at `%APPDATA%\NuGet\NuGet.Config.bak-clipbridge-m2`.)
 
-The repo pins .NET 8 via `global.json` (`rollForward: latestFeature`).
+The repo pins .NET 8 via `global.json` (`version: 8.0.427`, `rollForward: latestFeature`).
+The SDK version matters for releases: a self-contained publish copies the runtime out of
+the SDK's runtime packs, so the SDK decides which .NET patch ends up in the package.
+8.0.427 is the first 8.0.4xx SDK that bundles the 8.0.33 runtime pack, and
+`scripts/build-daily.ps1` reads the published `ClipBridge.runtimeconfig.json` and
+`hostpolicy.dll` back and fails the build if the package would ship an older runtime.
+Pass `-DotnetExe <path>` (or set `CLIPBRIDGE_DOTNET`) to build with a specific SDK.
 
 ## 2. Repository layout
 

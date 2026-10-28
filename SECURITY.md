@@ -38,6 +38,9 @@ you prefer otherwise.
   line or config files inside the install folder.
 - **System changes**: ClipBridge never modifies firewall, proxy or VPN settings and never
   forwards ports.
+- **No telemetry**: neither component ships an analytics, crash-reporting or telemetry SDK,
+  and the only outbound HTTP requests go to the relay address you configured (loopback or
+  your own LAN). There is no update check, no usage reporting and no third-party endpoint.
 - **Data at rest**: clipboard text is stored unencrypted in a local SQLite file under the
   user's profile; the token sits in the user's config file. Both rely on standard
   Windows account isolation.

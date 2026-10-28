@@ -15,8 +15,10 @@ versions they shipped with (`apps/windows` client / `services/relay`).
 
 ### Changed
 - Product version aligned to 1.0.0 across the Windows client (was 0.4.0) and relay (was 0.2.0).
-
-### Changed
+- Windows package now embeds the .NET 8.0.33 runtime (`Microsoft.NETCore.App` and
+  `Microsoft.WindowsDesktop.App`) instead of 8.0.11. `global.json` pins SDK 8.0.427 and
+  `scripts/build-daily.ps1` verifies the published package and fails if it would ship an
+  older runtime.
 - `scripts/build-daily.ps1` maps build paths to a neutral `/clipbridge` prefix
   (`-p:PathMap`) and no longer ships `*.pdb` files in artifacts, so distributed binaries
   do not embed the maintainer's Windows account name or folder layout.
