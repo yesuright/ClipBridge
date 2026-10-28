@@ -75,9 +75,10 @@ ClipBridge's relay runs in one of two modes, with intentionally different defaul
 - **Managed relay (the packaged Windows client)** — the tray client starts the relay as a
   child process and sets `CLIPBRIDGE_BIND_HOST=0.0.0.0` for it (`RelayProcess.cs`), so
   iPhone/iPad Shortcuts on the same LAN can reach it. This is the shipped product's
-  intended default: `0.0.0.0:8787`, or the next free port when 8787 is busy (persisted,
-  with a tray notice). The client itself always talks to the relay over loopback
-  (`http://127.0.0.1:<port>`).
+  intended default: `0.0.0.0:8787`, or the next free port when 8787 is busy (persisted
+  and logged; a tray notice appears when this happens while the app is running). By
+  default the client itself talks to the relay over loopback (`http://127.0.0.1:<port>`;
+  an explicit `CLIPBRIDGE_RELAY_URL` override can point it elsewhere).
 
 Both modes enforce the same bearer-token auth and the same LAN warnings (§4.2).
 

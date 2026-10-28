@@ -11,7 +11,7 @@ around HTTP proxies.
 
 ```text
 Windows  Ctrl+C ──►  ClipBridge client ──► local Relay ──► SQLite
-iPhone "Get from ClipBridge" ─────────────► local Relay ──► iPhone clipboard (a few seconds)
+iPhone "Get from ClipBridge" ─────────────► local Relay ──► iPhone clipboard
 
 iPhone copy ──► "Send to ClipBridge" ──► local Relay ──► Windows clipboard (a few seconds)
 ```
@@ -274,7 +274,8 @@ Vulnerability reports: see [SECURITY.md](SECURITY.md).
    when the address changes.
 
 5. **Port changes when 8787 is busy** — if another program owns the port, ClipBridge
-   moves to the next free port and tells you; update the port in both shortcuts.
+   moves to the next free port (persisted and logged; the tray shows a notice if this
+   happens while the app is running). Update the port in both shortcuts.
 
 6. **No offline queue** — if the phone or the PC is unreachable when you send, that clip
    is not queued; send it again after the connection returns (uploads retry 3× with

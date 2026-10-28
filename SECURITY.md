@@ -26,7 +26,8 @@ you prefer otherwise.
 - **Auth**: every `/api/v1/*` endpoint except `/api/v1/health` requires a 256-bit random
   bearer token generated per install, compared in constant time. The only unauthenticated
   endpoints are `/api/v1/health` (returns only `status` / `service` / `version` —
-  no user data), the root `/` and the Swagger UI at `/docs` (API shape only).
+  no user data), the root `/` and the API-shape endpoints: the Swagger UI at `/docs`
+  and its `/openapi.json` schema.
 - **Transport**: plain HTTP on your LAN. The token and clipboard text are not encrypted
   in transit. This is the documented trade-off of the current release — trusted private
   networks only, never the public internet, never router port-forwarding.
