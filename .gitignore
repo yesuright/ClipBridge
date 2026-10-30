@@ -45,3 +45,6 @@ Desktop.ini
 
 # --- Python tooling caches ---
 .pytest_cache/
+
+# --- candidate distribution output (kept on disk, not tracked) ---
+dist/
