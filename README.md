@@ -177,7 +177,7 @@ Closing the window only hides it — sync keeps running in the tray.
 ```text
 ┌────────────────────────── Windows ──────────────────────────┐      ┌─────────┐
 │                                                             │      │ iPhone  │
-│  ClipBridge.exe (tray, .NET 8, self-contained)              │      │         │
+│  ClipBridge.exe (tray, .NET 10, self-contained)             │      │         │
 │   ├── clipboard listener → POST /api/v1/clips               │      │Shortcut │
 │   ├── poll /api/v1/clips?limit=20 (2 s) → write clipboard   │      │  Send   │
 │   └── manages ──► relay\ClipBridgeRelay.exe (PyInstaller)   │      │  Get    │
@@ -306,10 +306,10 @@ never the token).
 
 ## Building from source
 
-Prerequisites: **.NET 8 SDK 8.0.427 or newer** and **Python 3.12+** (3.13 tested). Windows
-PowerShell 5.1 is the tested shell for the scripts. The SDK version is not cosmetic: a
-self-contained publish takes the runtime from the SDK, and
-`scripts/build-daily.ps1` refuses to package a runtime older than 8.0.33
+Prerequisites: **.NET 10 SDK 10.0.402 or newer** (10.0.4xx band) and **Python 3.12+**
+(3.13 tested). Windows PowerShell 5.1 is the tested shell for the scripts. The SDK version
+is not cosmetic: a self-contained publish takes the runtime from the SDK, and
+`scripts/build-daily.ps1` refuses to package a runtime older than 10.0.13
 (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)).
 
 ```powershell
@@ -360,7 +360,7 @@ iPhone end-to-end behaviour on real hardware is verified manually with
 ## Project layout
 
 ```text
-apps/windows/        C# .NET 8 tray client (ClipBridge.Core + ClipBridge.Win + xunit tests)
+apps/windows/        C# .NET 10 tray client (ClipBridge.Core + ClipBridge.Win + xunit tests)
 services/relay/      Python FastAPI relay (SQLite, PyInstaller-packaged) + pytest suite
 shortcuts/           Apple Shortcuts setup guides (Send / Get)
 docs/                architecture, protocol, security, development, daily-use, portability
@@ -374,10 +374,6 @@ ClipBridge is maintained as a tool its author uses daily. Everything below is a 
 a shipped feature — no dates are promised, and [CHANGELOG.md](CHANGELOG.md) is the record
 of what actually shipped.
 
-- **Near term — migrate to .NET 10 LTS.** .NET 8 leaves support on **2026-11-10**. v1.0.0
-  ships the last .NET 8 security patch (8.0.33 runtime, self-contained), which keeps the
-  current release supported in the meantime; moving the Windows client to .NET 10 LTS is
-  the highest-priority follow-up.
 - **Next — proxy and VPN friendliness.** Sync currently needs a manual `NO_PROXY` entry
   when a machine-wide HTTP proxy is configured. The goal is to work out of the box in
   those environments without changing the user's proxy settings.

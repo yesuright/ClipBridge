@@ -4,7 +4,7 @@
 
 ```text
 Windows login (Startup: HKCU Run, user-level, optional)
-   └─ ClipBridge.exe                    (tray client, .NET 8 self-contained, GUI subsystem)
+   └─ ClipBridge.exe                    (tray client, .NET 10 self-contained, GUI subsystem)
         ├─ ClipBridgeRelay.exe          (packaged relay, PyInstaller onedir, child process)
         │     └─ uvloop/lifespan        (runs in-process inside ClipBridgeRelay.exe)
         └─ (in-proc) Sync engine, clipboard listener, mDNS responder, network monitor

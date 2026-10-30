@@ -12,8 +12,8 @@
 # runs the whole system (relay + tray client) from one process tree.
 #
 # Usage:  powershell -ExecutionPolicy Bypass -File scripts\build-daily.ps1
-# Requires: .NET 8 SDK 8.0.427 or newer (repo scripts prefer %USERPROFILE%\.dotnet),
-# relay venv with pyinstaller installed (pip install pyinstaller).
+# Requires: .NET 10 SDK 10.0.402 or newer (global.json-pinned; candidate SDKs are probed
+# for it, see the locate-tools step), relay venv with pyinstaller installed.
 
 param(
     [string]$Configuration = 'Release',
@@ -29,9 +29,10 @@ param(
 
 # self-contained publishing copies the runtime out of the SDK's runtime packs, so the
 # SDK (not the machine's installed runtime) decides which .NET patch ships. An older
-# SDK therefore produces an unpatched package without any warning. 8.0.33 is the
-# October 2026 .NET 8 servicing release; keep this floor in sync with global.json.
-$requiredRuntime = [version]'8.0.33'
+# SDK therefore produces an unpatched package without any warning. 10.0.13 is the
+# .NET 10 servicing release bundled with the SDK pinned in global.json (10.0.402);
+# keep this floor in sync with global.json.
+$requiredRuntime = [version]'10.0.13'
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -45,20 +46,26 @@ if (-not [IO.Path]::GetFullPath($artifact).StartsWith($root + [IO.Path]::Directo
 Write-Host '=== build-daily: ClipBridge daily-use artifact ===' -ForegroundColor Cyan
 
 # ------------------------------------------------------------------ locate tools
+# Candidate dotnets are probed from the repo root, where the SDK resolver honours
+# global.json: the first one that can actually supply the pinned .NET 10 SDK wins.
+# A machine may carry several SDKs (e.g. a user-profile .NET 8 and a machine-wide
+# .NET 10); probing — instead of trusting folder or PATH order — is what keeps the
+# build reproducible, and the published runtime is read back from disk further below.
 $dotnet = $null
-foreach ($candidate in @($DotnetExe, $env:CLIPBRIDGE_DOTNET, "$env:USERPROFILE\.dotnet\dotnet.exe")) {
-    if ($candidate -and (Test-Path $candidate)) { $dotnet = $candidate; break }
+$sdkVersion = $null
+foreach ($candidate in @($DotnetExe, $env:CLIPBRIDGE_DOTNET, "$env:USERPROFILE\.dotnet\dotnet.exe", (Get-Command dotnet -ErrorAction SilentlyContinue).Source)) {
+    if (-not $candidate -or -not (Test-Path $candidate)) { continue }
+    if ($sdkVersion) { continue }
+    # global.json is only honoured for commands run from inside the repository.
+    Push-Location $root
+    $version = try { (& $candidate --version 2>$null | Select-Object -First 1) } catch { $null }
+    Pop-Location
+    if ($version) { $dotnet = $candidate; $sdkVersion = $version }
 }
-if (-not $dotnet) { $dotnet = (Get-Command dotnet -ErrorAction SilentlyContinue).Source }
-if (-not $dotnet) { Write-Host '.NET 8 SDK not found'; exit 1 }
-
-# global.json is only honoured for commands run from inside the repository.
-Push-Location $root
-$sdkVersion = try { (& $dotnet --version 2>$null | Select-Object -First 1) } catch { $null }
-Pop-Location
-if (-not $sdkVersion) {
-    Write-Host "No .NET SDK matching global.json is available via $dotnet" -ForegroundColor Red
-    Write-Host 'Install SDK 8.0.427 or newer: dotnet-install.ps1 -Version 8.0.427 -InstallDir $env:USERPROFILE\.dotnet' -ForegroundColor Yellow
+if (-not $dotnet) {
+    Write-Host 'No .NET SDK matching global.json (10.0.402, 10.0.4xx band) was found.' -ForegroundColor Red
+    Write-Host 'Install SDK 10.0.402 or newer: dotnet-install.ps1 -Version 10.0.402 -InstallDir $env:USERPROFILE\.dotnet' -ForegroundColor Yellow
+    Write-Host 'Or pass an explicit SDK: scripts\build-daily.ps1 -DotnetExe "C:\Program Files\dotnet\dotnet.exe"' -ForegroundColor Yellow
     exit 1
 }
 Write-Host "Toolchain: $dotnet (SDK $sdkVersion)" -ForegroundColor DarkGray
@@ -119,9 +126,9 @@ if (-not [version]::TryParse($hostpolicyToken, [ref]$hostpolicyParsed) -or $host
 if (-not $runtimeOk) {
     Write-Host ''
     Write-Host "This build would ship a .NET runtime older than $requiredRuntime." -ForegroundColor Red
-    Write-Host "Publish with .NET SDK 8.0.427 or newer (see global.json), e.g.:" -ForegroundColor Yellow
-    Write-Host '  dotnet-install.ps1 -Version 8.0.427 -InstallDir $env:USERPROFILE\.dotnet' -ForegroundColor Yellow
-    Write-Host '  scripts\build-daily.ps1 -DotnetExe $env:USERPROFILE\.dotnet\dotnet.exe' -ForegroundColor Yellow
+    Write-Host "Publish with .NET SDK 10.0.402 or newer (see global.json), e.g.:" -ForegroundColor Yellow
+    Write-Host '  dotnet-install.ps1 -Version 10.0.402 -InstallDir $env:USERPROFILE\.dotnet' -ForegroundColor Yellow
+    Write-Host '  scripts\build-daily.ps1 -DotnetExe "C:\Program Files\dotnet\dotnet.exe"' -ForegroundColor Yellow
     exit 1
 }
 
@@ -157,6 +164,18 @@ Get-ChildItem -Path $artifactDisk -Force | Copy-Item -Destination $artifact -Rec
 # end users get no debug symbols: PDBs are build artifacts, they are not needed to run,
 # and removing them keeps the privacy guarantee even if PathMap is ever bypassed
 Get-ChildItem -Path $artifact -Recurse -Filter '*.pdb' -File | Remove-Item -Force
+
+# license files: the repo LICENSE plus the third-party notices of the EXACT embedded .NET
+# runtime, read from the runtime pack the SDK restored (version taken from the published
+# runtimeconfig.json) — not from whatever runtime happens to be installed on the machine.
+Copy-Item (Join-Path $root 'LICENSE') (Join-Path $artifact 'LICENSE') -Force
+$netcoreVersion = ($frameworks | Where-Object { $_.name -eq 'Microsoft.NETCore.App' } | Select-Object -First 1).version
+$packNotices = Join-Path $env:USERPROFILE (".nuget\packages\microsoft.netcore.app.runtime.win-x64\$netcoreVersion\THIRD-PARTY-NOTICES.TXT")
+if ($netcoreVersion -and (Test-Path $packNotices)) {
+    Copy-Item $packNotices (Join-Path $artifact 'THIRD-PARTY-NOTICES-dotnet-runtime.txt') -Force
+} else {
+    Write-Host "WARNING: third-party runtime notices not found: $packNotices" -ForegroundColor Yellow
+}
 
 # relay (packaged) → artifact\relay\
 $relayDist = Join-Path $buildDir 'dist-pyinstaller\ClipBridgeRelay'

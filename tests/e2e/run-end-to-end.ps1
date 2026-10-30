@@ -1,4 +1,4 @@
-# ClipBridge full-stack end-to-end verification (Milestone 2).
+﻿# ClipBridge full-stack end-to-end verification (Milestone 2).
 # Verifies:
 #   A. Windows clipboard -> relay
 #   B. relay (simulated iPhone) -> Windows clipboard
@@ -9,7 +9,7 @@
 #      simplified POST /clips/shortcut, GET latest?exclude_device_id,
 #      requester exclusion, unicode + 200 KB via shortcut path, loop prevention
 #
-# Requires: .NET 8 SDK, Python 3 + services/relay/.venv (pip install -r requirements-dev.txt)
+# Requires: .NET 10 SDK, Python 3 + services/relay/.venv (pip install -r requirements-dev.txt)
 # Run from the repo root:  powershell -ExecutionPolicy Bypass -File tests/e2e/run-end-to-end.ps1
 
 param(
@@ -92,11 +92,19 @@ function MakeClipBody([string]$content, [string]$deviceId, [string]$createdAt = 
 Write-Host "=== ClipBridge Milestone 2 E2E ===" -ForegroundColor Cyan
 if (-not (Test-Path $ProjectDir)) { Write-Host "Project dir missing: $ProjectDir"; exit 1 }
 
-# Prefer the user-installed SDK (e.g. %USERPROFILE%\.dotnet\dotnet.exe), then PATH.
+# Probe candidate SDKs against global.json (repo root): the pinned .NET 10 SDK wins,
+# not whatever PATH or folder order resolves first.
 $dotnet = $null
-if (Test-Path "$env:USERPROFILE\.dotnet\dotnet.exe") { $dotnet = "$env:USERPROFILE\.dotnet\dotnet.exe" }
-if (-not $dotnet) { $dotnet = (Get-Command dotnet -ErrorAction SilentlyContinue).Source }
-if (-not $dotnet) { Fail 'preflight: dotnet SDK' 'not found'; Write-Host 'Install the .NET 8 SDK'; exit 1 }
+$sdkVersion = $null
+foreach ($candidate in @("$env:USERPROFILE\.dotnet\dotnet.exe", (Get-Command dotnet -ErrorAction SilentlyContinue).Source)) {
+    if (-not $candidate -or -not (Test-Path $candidate)) { continue }
+    if ($sdkVersion) { continue }
+    Push-Location $ProjectDir
+    $version = try { (& $candidate --version 2>$null | Select-Object -First 1) } catch { $null }
+    Pop-Location
+    if ($version) { $dotnet = $candidate; $sdkVersion = $version }
+}
+if (-not $dotnet) { Fail 'preflight: dotnet SDK' 'not found'; Write-Host 'Install the .NET 10 SDK (global.json-pinned)'; exit 1 }
 
 $relayDir = Join-Path $ProjectDir 'services\relay'
 $venvPython = Join-Path $relayDir '.venv\Scripts\python.exe'
@@ -149,7 +157,7 @@ try {
         & $dotnet build (Join-Path $ProjectDir 'apps\windows\ClipBridge.sln') -c Debug --nologo -v q | Out-Host
         if ($LASTEXITCODE -ne 0) { Fail 'windows client build'; exit 1 }
     }
-    $clientExe = Join-Path $ProjectDir 'apps\windows\src\ClipBridge.Win\bin\Debug\net8.0-windows\ClipBridge.exe'
+    $clientExe = Join-Path $ProjectDir 'apps\windows\src\ClipBridge.Win\bin\Debug\net10.0-windows\ClipBridge.exe'
     if (-not (Test-Path $clientExe)) { Fail 'preflight: client exe' "missing $clientExe"; exit 1 }
     $clientProcess = Start-Process -FilePath $clientExe -PassThru
     Start-Sleep -Seconds 4

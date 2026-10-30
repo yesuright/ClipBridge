@@ -5,7 +5,7 @@ to get a development environment running and a change accepted.
 
 ## Ground rules
 
-- **Windows-only client, Python relay.** The client is C#/.NET 8 (WinForms) and only runs
+- **Windows-only client, Python relay.** The client is C#/.NET 10 (WinForms) and only runs
   on Windows; the relay is Python and cross-platform in principle, but the tests and
   scripts assume Windows PowerShell 5.1.
 - **Security invariants are non-negotiable:**
@@ -24,7 +24,7 @@ to get a development environment running and a change accepted.
 
 ## Setup
 
-Prerequisites: .NET 8 SDK, Python 3.12+ (3.13 tested), Windows.
+Prerequisites: .NET 10 SDK, Python 3.12+ (3.13 tested), Windows.
 
 ```powershell
 # Relay — from the repo root

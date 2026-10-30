@@ -1,6 +1,6 @@
 # ClipBridge Windows Client
 
-C# / .NET 8 tray app：监听剪贴板 → 上传到 relay；轮询 relay → 写入本地剪贴板。
+C# / .NET 10 tray app：监听剪贴板 → 上传到 relay；轮询 relay → 写入本地剪贴板。
 Milestone 3 起还负责：relay 子进程生命周期（Job Object + 有界重启）、单实例、
 局域网地址监控、mDNS 应答器、开机自启（HKCU Run）、状态模型。
 Milestone 4 加入原生 Home / History / Settings、System / Light / Dark 主题、原创图标，

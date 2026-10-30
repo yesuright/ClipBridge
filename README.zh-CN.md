@@ -143,7 +143,7 @@ ClipBridge 保留同样的使用习惯，但数据只在你的设备之间：
 
 ```text
 ┌────────────────────────── Windows ──────────────────────────┐      ┌─────────┐
-│  ClipBridge.exe（托盘，.NET 8，self-contained）              │      │ iPhone  │
+│  ClipBridge.exe（托盘，.NET 10，self-contained）             │      │ iPhone  │
 │   ├── 剪贴板监听 → POST /api/v1/clips                       │      │快捷指令 │
 │   ├── 每 2 秒轮询 /api/v1/clips?limit=20 → 写入剪贴板        │      │  Send   │
 │   └── 管理 ──► relay\ClipBridgeRelay.exe（PyInstaller）      │      │  Get    │
@@ -240,9 +240,9 @@ LAN 地址、自启动健康；只打印 8 位 token 指纹，不打印 token）
 
 ## 从源码构建
 
-前置：**.NET 8 SDK 8.0.427 或更新** 与 **Python 3.12+**（3.13 已测试）。脚本以
-Windows PowerShell 5.1 为准。SDK 版本不是形式问题：self-contained 发布直接从 SDK
-取运行时，`scripts/build-daily.ps1` 会拒绝打包低于 8.0.33 的运行时
+前置：**.NET 10 SDK 10.0.402 或更新**（10.0.4xx band）与 **Python 3.12+**（3.13 已测试）。
+脚本以 Windows PowerShell 5.1 为准。SDK 版本不是形式问题：self-contained 发布直接从 SDK
+取运行时，`scripts/build-daily.ps1` 会拒绝打包低于 10.0.13 的运行时
 （见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)）。
 
 ```powershell
@@ -291,7 +291,7 @@ iPhone 真机验收按 [docs/DEVICE_TEST.md](docs/DEVICE_TEST.md) 手动执行�
 ## 目录结构
 
 ```text
-apps/windows/        C# .NET 8 托盘客户端（Core + Win + xunit 测试）
+apps/windows/        C# .NET 10 托盘客户端（Core + Win + xunit 测试）
 services/relay/      Python FastAPI Relay（SQLite，PyInstaller 打包）+ pytest
 shortcuts/           Apple 快捷指令配置指南（Send / Get）
 docs/                架构 / 协议 / 安全 / 开发 / 日常使用 / 可移植性
@@ -304,9 +304,6 @@ tests/e2e/           全链路端到端脚本（真实剪贴板 + 模拟手机�
 ClipBridge 是作者日常在用的工具，会按实际需要持续维护。以下均为**计划**，不是已发布
 功能，也不承诺具体日期；已交付的内容以 [CHANGELOG.md](CHANGELOG.md) 为准。
 
-- **近期 —— 迁移到 .NET 10 LTS。** .NET 8 将于 **2026-11-10** 结束支持。v1.0.0 已采用
-  最后一个 .NET 8 安全补丁（8.0.33 运行时，self-contained），在过渡期内保持当前版本
-  可用；把 Windows 客户端迁到 .NET 10 LTS 是优先级最高的后续事项。
 - **后续 —— 代理与 VPN 环境兼容性。** 当前在配置了系统级 HTTP 代理的机器上需要手动加
   `NO_PROXY`；目标是无需改动用户的代理设置即可开箱可用。
 - **后续 —— 构建、诊断与日志。** 让发布构建可复现并记录所用工具链；让诊断信息更容易

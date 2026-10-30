@@ -54,6 +54,7 @@ internal static class Art
 
 public class Surface : Panel
 {
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public Palette Colors { get; set; } = Palette.Create(false);
     public Surface() { DoubleBuffered = true; }
     protected override void OnPaint(PaintEventArgs e)
@@ -70,11 +71,16 @@ public class Surface : Panel
 
 public class ActionButton : Button
 {
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public Palette Colors { get; set; } = Palette.Create(false);
-    public string? Glyph { get; set; }
-    public bool Primary { get; set; }
-    public bool Selected { get; set; }
-    public bool Quiet { get; set; }
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public string? Glyph { get; set; }
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public bool Primary { get; set; }
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public bool Selected { get; set; }
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public bool Quiet { get; set; }
     private bool _hover, _pressed;
     public ActionButton()
     {
@@ -123,9 +129,12 @@ public class ActionButton : Button
 
 public sealed class BridgeView : Control
 {
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public Palette Colors { get; set; } = Palette.Create(false);
-    public bool Connected { get; set; }
-    public bool Paused { get; set; }
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public bool Connected { get; set; }
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public bool Paused { get; set; }
     public BridgeView() { DoubleBuffered = true; AccessibleName = "Windows, this PC, linked to iPhone via Shortcut"; AccessibleRole = AccessibleRole.Graphic; }
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -160,8 +169,10 @@ public sealed class BridgeView : Control
 
 public sealed class HistoryList : ListBox
 {
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public Palette Colors { get; set; } = Palette.Create(false);
-    public string LocalDevice { get; set; } = "windows-main";
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public string LocalDevice { get; set; } = "windows-main";
     public HistoryList()
     {
         DrawMode = DrawMode.OwnerDrawFixed; BorderStyle = BorderStyle.None;
@@ -200,7 +211,8 @@ public sealed class HistoryRow(ClipRecord clip, string localDevice)
 public sealed class HistoryText : RichTextBox
 {
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr wparam, IntPtr lparam);
-    public Func<string, bool>? SafeCopy { get; set; }
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public Func<string, bool>? SafeCopy { get; set; }
     public HistoryText()
     {
         Multiline = true; ReadOnly = true; BorderStyle = BorderStyle.None;
@@ -233,6 +245,7 @@ public sealed class HistoryText : RichTextBox
 public sealed class HistoryScrollBar : Control
 {
     private readonly HistoryText _text;
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public Palette Colors { get; set; } = Palette.Create(false);
     private bool _drag;
     private int _grabOffset;

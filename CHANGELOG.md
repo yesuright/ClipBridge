@@ -7,6 +7,16 @@ versions they shipped with (`apps/windows` client / `services/relay`).
 
 ## [Unreleased]
 
+### Changed
+- Windows client and test suite migrated from .NET 8 to **.NET 10 LTS** (`net10.0` /
+  `net10.0-windows`). `global.json` now pins SDK **10.0.402** (`rollForward: latestFeature`)
+  and `scripts/build-daily.ps1` enforces a **10.0.13** runtime floor, read back from the
+  published `runtimeconfig.json` / `hostpolicy.dll` as before. Build and dev scripts probe
+  candidate SDKs against `global.json` instead of preferring `%USERPROFILE%\.dotnet`, so a
+  machine carrying both SDKs builds with .NET 10 deterministically. Product behaviour,
+  protocol, storage and configuration formats are unchanged; the packaged relay (Python)
+  is untouched.
+
 ## [1.0.0] — 2026-10-28 (client 1.0.0 / relay 1.0.0)
 
 ### Added

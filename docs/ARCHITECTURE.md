@@ -27,7 +27,7 @@ no .NET runtime install either. Runtime dependencies of the artifact: **none** (
 
 ```text
 ┌─────────────────────────────── Windows 11 PC (single user process tree) ──────────────────────────────┐
-│  ClipBridge.exe (tray client; .NET 8 self-contained, WinForms, GUI subsystem — no console window)      │
+│  ClipBridge.exe (tray client; .NET 10 self-contained, WinForms, GUI subsystem — no console window)      │
 │   ├─ SyncEngine (clipboard listener + 2 s polling + loop prevention)  [ClipBridge.Core]                │
 │   ├─ AppStatusModel (immutable snapshots + Changed event — UI decoupled)                               │
 │   ├─ NetworkMonitor (event-driven LAN address tracking)                                                │
@@ -80,8 +80,8 @@ no .NET runtime install either. Runtime dependencies of the artifact: **none** (
 
 | Component | Responsibility | Technology |
 | --- | --- | --- |
-| `ClipBridge.Win` | hidden window clipboard listener, tray shell, STA marshalling | C#/.NET 8 + WinForms |
-| `ClipBridge.Core` | hashing, dedup/caches, relay client, sync engine (unit-testable) | C#/.NET 8 classlib |
+| `ClipBridge.Win` | hidden window clipboard listener, tray shell, STA marshalling | C#/.NET 10 + WinForms |
+| `ClipBridge.Core` | hashing, dedup/caches, relay client, sync engine (unit-testable) | C#/.NET 10 classlib |
 | Relay API | REST endpoints, auth, validation, size limits | Python 3.13 + FastAPI |
 | ClipStore | persistent clip storage, pruning, exclusion queries | stdlib `sqlite3` (WAL) |
 

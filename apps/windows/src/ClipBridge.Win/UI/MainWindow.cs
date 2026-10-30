@@ -42,7 +42,8 @@ public sealed class MainWindow : Form
     private int _page;
     private int _historyGeneration;
     private readonly List<(Control Control, float X, float Y, float Width, float Height)> _settingLayout = [];
-    public bool CloseToTray { get; set; } = true;
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public bool CloseToTray { get; set; } = true;
     public int SelectedPage => _page;
 
     public MainWindow(AppStatusSnapshot snapshot, Appearance appearance, IRelayClient historyClient,
