@@ -306,8 +306,9 @@ never the token).
 
 ## Building from source
 
-Prerequisites: **.NET 10 SDK 10.0.402 or newer** (10.0.4xx band) and **Python 3.12+**
-(3.13 tested). Windows PowerShell 5.1 is the tested shell for the scripts. The SDK version
+Prerequisites: **.NET 10 SDK 10.0.402 or any later 10.0.xxx** (`global.json` uses
+`rollForward: latestFeature`, so any later 10.0 feature band is picked up; a different
+minor or major is never used) and **Python 3.12+** (3.13 tested). Windows PowerShell 5.1 is the tested shell for the scripts. The SDK version
 is not cosmetic: a self-contained publish takes the runtime from the SDK, and
 `scripts/build-daily.ps1` refuses to package a runtime older than 10.0.13
 (see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)).

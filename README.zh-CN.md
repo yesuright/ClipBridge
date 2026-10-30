@@ -240,7 +240,9 @@ LAN 地址、自启动健康；只打印 8 位 token 指纹，不打印 token）
 
 ## 从源码构建
 
-前置：**.NET 10 SDK 10.0.402 或更新**（10.0.4xx band）与 **Python 3.12+**（3.13 已测试）。
+前置：**.NET 10 SDK 10.0.402 或任一更新的 10.0.xxx**（`global.json` 使用
+`rollForward: latestFeature`：会自动采用更高的 10.0 feature band，但绝不会用到不同的
+minor 或主版本）与 **Python 3.12+**（3.13 已测试）。
 脚本以 Windows PowerShell 5.1 为准。SDK 版本不是形式问题：self-contained 发布直接从 SDK
 取运行时，`scripts/build-daily.ps1` 会拒绝打包低于 10.0.13 的运行时
 （见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)）。

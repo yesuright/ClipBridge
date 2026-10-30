@@ -18,8 +18,9 @@
 > run of this repo added a `huawei` source to the user-level config, it is safe to
 > delete that line; the backup lives at `%APPDATA%\NuGet\NuGet.Config.bak-clipbridge-m2`.)
 
-The repo pins .NET 10 via `global.json` (`version: 10.0.402`, `rollForward: latestFeature`,
-so newer 10.0.4xx servicing SDKs are picked up automatically). The SDK version matters for
+The repo pins .NET 10 via `global.json` (`version: 10.0.402`, `rollForward: latestFeature`;
+per the official SDK selection rules this uses the highest installed 10.0.xxx SDK — any
+later feature band included — that is >= 10.0.402, and never a different minor or major). The SDK version matters for
 releases: a self-contained publish copies the runtime out of the SDK's runtime packs, so
 the SDK decides which .NET patch ends up in the package.
 10.0.402 is the SDK that bundles the 10.0.13 runtime pack, and

@@ -1,4 +1,4 @@
-# Build the daily-use ClipBridge artifact (Milestone 4).
+﻿# Build the daily-use ClipBridge artifact (Milestone 4).
 #
 # Produces:  artifacts\ClipBridge\
 #   ClipBridge.exe            <- Windows tray client (self-contained .NET, no runtime needed)
@@ -63,7 +63,7 @@ foreach ($candidate in @($DotnetExe, $env:CLIPBRIDGE_DOTNET, "$env:USERPROFILE\.
     if ($version) { $dotnet = $candidate; $sdkVersion = $version }
 }
 if (-not $dotnet) {
-    Write-Host 'No .NET SDK matching global.json (10.0.402, 10.0.4xx band) was found.' -ForegroundColor Red
+    Write-Host 'No .NET SDK matching global.json (10.0.402 or any later 10.0.xxx) was found.' -ForegroundColor Red
     Write-Host 'Install SDK 10.0.402 or newer: dotnet-install.ps1 -Version 10.0.402 -InstallDir $env:USERPROFILE\.dotnet' -ForegroundColor Yellow
     Write-Host 'Or pass an explicit SDK: scripts\build-daily.ps1 -DotnetExe "C:\Program Files\dotnet\dotnet.exe"' -ForegroundColor Yellow
     exit 1
@@ -149,8 +149,18 @@ $buildDir = Join-Path $root 'build'
     --hidden-import uvicorn.protocols.websockets.auto `
     --hidden-import uvicorn.lifespan.on `
     --hidden-import uvicorn.logging `
-    --collect-submodules uvicorn
+    --collect-submodules uvicorn `
+    --exclude-module pytest `
+    --exclude-module _pytest
 if ($LASTEXITCODE -ne 0) { Write-Host 'relay packaging failed'; exit $LASTEXITCODE }
+
+# the relay ships third-party code: the notices file and the packaged exe must agree
+# (every shipped component declared, every declared pin matching the build venv).
+$venvPython = Join-Path $relayDir '.venv\Scripts\python.exe'
+& $venvPython (Join-Path $PSScriptRoot 'check-relay-notices.py') `
+    --exe (Join-Path $buildDir 'dist-pyinstaller\ClipBridgeRelay\ClipBridgeRelay.exe') `
+    --notices (Join-Path $root 'THIRD-PARTY-NOTICES.txt')
+if ($LASTEXITCODE -ne 0) { Write-Host 'third-party notices cross-check failed'; exit $LASTEXITCODE }
 
 # ------------------------------------------------------------------ 3) assemble artifact
 Write-Host ''
@@ -165,17 +175,62 @@ Get-ChildItem -Path $artifactDisk -Force | Copy-Item -Destination $artifact -Rec
 # and removing them keeps the privacy guarantee even if PathMap is ever bypassed
 Get-ChildItem -Path $artifact -Recurse -Filter '*.pdb' -File | Remove-Item -Force
 
-# license files: the repo LICENSE plus the third-party notices of the EXACT embedded .NET
-# runtime, read from the runtime pack the SDK restored (version taken from the published
-# runtimeconfig.json) — not from whatever runtime happens to be installed on the machine.
+# license files: the repo LICENSE, the project's third-party notices (tracked at the
+# repo root and cross-checked against the packaged relay above), and the third-party
+# notices of the EXACT embedded .NET runtime, read from the runtime pack the SDK
+# restored (version taken from the published runtimeconfig.json) — not from whatever
+# runtime happens to be installed on the machine. License completeness is a release
+# requirement: a missing file fails the build instead of shipping silently.
 Copy-Item (Join-Path $root 'LICENSE') (Join-Path $artifact 'LICENSE') -Force
+$projectNotices = Join-Path $root 'THIRD-PARTY-NOTICES.txt'
+if (-not (Test-Path $projectNotices)) { Write-Host 'THIRD-PARTY-NOTICES.txt is missing at the repo root'; exit 1 }
+Copy-Item $projectNotices (Join-Path $artifact 'THIRD-PARTY-NOTICES.txt') -Force
+
 $netcoreVersion = ($frameworks | Where-Object { $_.name -eq 'Microsoft.NETCore.App' } | Select-Object -First 1).version
-$packNotices = Join-Path $env:USERPROFILE (".nuget\packages\microsoft.netcore.app.runtime.win-x64\$netcoreVersion\THIRD-PARTY-NOTICES.TXT")
-if ($netcoreVersion -and (Test-Path $packNotices)) {
-    Copy-Item $packNotices (Join-Path $artifact 'THIRD-PARTY-NOTICES-dotnet-runtime.txt') -Force
-} else {
-    Write-Host "WARNING: third-party runtime notices not found: $packNotices" -ForegroundColor Yellow
+if (-not $netcoreVersion) { Write-Host 'could not read the embedded Microsoft.NETCore.App version from runtimeconfig.json'; exit 1 }
+$packageRoots = @($env:NUGET_PACKAGES, "$env:USERPROFILE\.nuget\packages") | Where-Object { $_ } | Select-Object -Unique
+$packNotices = $null
+foreach ($packageRoot in $packageRoots) {
+    $candidatePath = Join-Path $packageRoot "microsoft.netcore.app.runtime.win-x64\$netcoreVersion\THIRD-PARTY-NOTICES.TXT"
+    if (Test-Path $candidatePath) { $packNotices = $candidatePath; break }
 }
+if (-not $packNotices) {
+    Write-Host "FAIL: third-party notices for the embedded .NET runtime $netcoreVersion were not found." -ForegroundColor Red
+    Write-Host 'Searched the runtime pack in these package roots:' -ForegroundColor Red
+    foreach ($packageRoot in $packageRoots) { Write-Host "  $packageRoot" -ForegroundColor Red }
+    Write-Host 'Restore the matching runtime pack once (e.g. dotnet restore on this solution) or set NUGET_PACKAGES to the cache that has it.' -ForegroundColor Yellow
+    exit 1
+}
+Copy-Item $packNotices (Join-Path $artifact 'THIRD-PARTY-NOTICES-dotnet-runtime.txt') -Force
+
+# build manifest: generated from the live environment so the shipped file always
+# describes THIS build (v1.0.0 shipped the same file inside its ZIP).
+$buildCommit = try { (git -C $root rev-parse HEAD) } catch { 'unknown' }
+$buildDateUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm')
+$pythonVersion = (& $venvPython --version).TrimStart('Python ')
+$pyInstallerVersion = (& $venvPython -m PyInstaller --version | Select-Object -Last 1).Trim()
+$versionsList = ($frameworks | ForEach-Object { "  $($_.name) $($_.version)" }) -join "`r`n"
+$freeze = (& $venvPython -m pip freeze --disable-pip-version-check) -join "`r`n"
+@"
+ClipBridge NET10-EVAL build manifest (candidate, NOT a release)
+build commit: $buildCommit (branch feat/dotnet10-migration, local-only)
+build date (UTC): $buildDateUtc
+
+toolchain:
+  .NET SDK $sdkVersion (win-x64)
+  Python $pythonVersion
+  PyInstaller $pyInstallerVersion
+
+components:
+  client: 1.0.0 (assembly 1.0.0.0), self-contained, net10.0-windows
+  relay: 1.0.0 (PyInstaller onedir, no Python required; sources unchanged from v1.0.0)
+
+embedded runtime:
+$versionsList
+
+runtime components (build venv dist-info, the environment that produced this build):
+$freeze
+"@ | Set-Content -Path (Join-Path $artifact 'BUILD-MANIFEST.txt') -Encoding UTF8
 
 # relay (packaged) → artifact\relay\
 $relayDist = Join-Path $buildDir 'dist-pyinstaller\ClipBridgeRelay'
