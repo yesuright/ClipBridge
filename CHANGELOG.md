@@ -7,6 +7,8 @@ versions they shipped with (`apps/windows` client / `services/relay`).
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-10-31 (client 1.1.0 / relay 1.0.0)
+
 ### Fixed
 - **Connection setup was effectively unreachable from the main window.** The Settings
   page hid the action inside a 260px muted `Authentication: Configured · Connection

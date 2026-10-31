@@ -24,7 +24,10 @@ param(
     [string]$OutputDir = '',
     # Explicit SDK to publish with. Resolution order: this parameter, CLIPBRIDGE_DOTNET,
     # %USERPROFILE%\.dotnet\dotnet.exe, then dotnet on PATH.
-    [string]$DotnetExe = ''
+    [string]$DotnetExe = '',
+    # When set (e.g. 'v1.1.0'), BUILD-MANIFEST.txt is labelled as a release build
+    # instead of the internal candidate label.
+    [string]$ReleaseLabel = ''
 )
 
 # self-contained publishing copies the runtime out of the SDK's runtime packs, so the
@@ -206,14 +209,17 @@ Copy-Item $packNotices (Join-Path $artifact 'THIRD-PARTY-NOTICES-dotnet-runtime.
 # build manifest: generated from the live environment so the shipped file always
 # describes THIS build (v1.0.0 shipped the same file inside its ZIP).
 $buildCommit = try { (git -C $root rev-parse HEAD) } catch { 'unknown' }
+$buildBranch = try { (git -C $root rev-parse --abbrev-ref HEAD) } catch { 'unknown' }
+$clientVersion = [Reflection.AssemblyName]::GetAssemblyName((Join-Path $artifact 'ClipBridge.dll')).Version
+$manifestHeader = if ($ReleaseLabel) { "ClipBridge $ReleaseLabel build manifest" } else { 'ClipBridge NET10-EVAL build manifest (candidate, NOT a release)' }
 $buildDateUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm')
 $pythonVersion = (& $venvPython --version).TrimStart('Python ')
 $pyInstallerVersion = (& $venvPython -m PyInstaller --version | Select-Object -Last 1).Trim()
 $versionsList = ($frameworks | ForEach-Object { "  $($_.name) $($_.version)" }) -join "`r`n"
 $freeze = (& $venvPython -m pip freeze --disable-pip-version-check) -join "`r`n"
 @"
-ClipBridge NET10-EVAL build manifest (candidate, NOT a release)
-build commit: $buildCommit (branch feat/dotnet10-migration, local-only)
+$manifestHeader
+build commit: $buildCommit (branch $buildBranch)
 build date (UTC): $buildDateUtc
 
 toolchain:
@@ -222,8 +228,8 @@ toolchain:
   PyInstaller $pyInstallerVersion
 
 components:
-  client: 1.0.0 (assembly 1.0.0.0), self-contained, net10.0-windows
-  relay: 1.0.0 (PyInstaller onedir, no Python required; sources unchanged from v1.0.0)
+  client: $($clientVersion.ToString(3)) (assembly $clientVersion), self-contained, net10.0-windows
+  relay: 1.0.0 (PyInstaller onedir, no Python required; sources unchanged since v1.0.0 - no functional change in 1.1.0)
 
 embedded runtime:
 $versionsList
