@@ -77,7 +77,8 @@ ClipBridge 保留同样的使用习惯，但数据只在你的设备之间：
 ## 连接 iPhone（Apple 快捷指令）
 
 在系统自带的“快捷指令”App 中创建两个快捷指令，需要 *Connect your iPhone* 窗口里的
-**地址**与**token**（之后随时可从托盘 *Connection setup…* 重新打开）。
+**地址**与**token**（之后随时可从 Home / Settings 页的 *Connection setup* 按钮或托盘
+*Connection setup…* 重新打开）。
 
 **快捷指令 1 —— “Send to ClipBridge”**（手机 → 电脑），5 个动作：
 

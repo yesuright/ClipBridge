@@ -96,7 +96,8 @@ code signing; an offline sync queue. See [Known issues](#known-issues) and
 ## Connecting your iPhone (Apple Shortcuts)
 
 Create two shortcuts in the built-in Shortcuts app. You need the **address** and
-**token** from the *Connect your iPhone* window (re-open it any time: tray icon →
+**token** from the *Connect your iPhone* window (re-open it any time: the
+*Connection setup* button on the Home or Settings page, or tray icon →
 *Connection setup…*).
 
 **Shortcut 1 — "Send to ClipBridge"** (iPhone → Windows), 5 actions:

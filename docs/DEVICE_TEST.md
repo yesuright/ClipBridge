@@ -41,7 +41,7 @@
      不要发到聊天、截图或粘贴进任何文件）
    - **设备 ID**：自定，如 `iphone`。规则：字母或数字开头，仅字母/数字/`-`/`_`，1–64 字符，
      无需注册——**Send 与 Get 两个快捷指令必须填同一个值**
-3. 随时重开窗口：托盘图标 → **Connection setup…**；Home 页 → *Copy address* 可直接复制地址。
+3. 随时重开窗口：Home 或 Settings 页的 **Connection setup** 按钮，或托盘图标 → **Connection setup…**；Home 页 → *Copy address* 可直接复制地址。
 4. 端口说明：默认 **8787**；被其他程序占用时会自动换到下一个空闲端口并持久化、托盘提示——
    此时两个快捷指令里的端口要一起更新（Token 不受影响）。
 5. 程序目录整体移动不影响任何参数：配置与 Token 存于 `%APPDATA%\ClipBridge`，与安装位置无关。

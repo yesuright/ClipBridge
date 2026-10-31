@@ -18,8 +18,8 @@
 | `Send to ClipBridge` | iPhone → Windows | Address、Token |
 | `Get from ClipBridge` | Windows → iPhone | Address、Token |
 
-之后随时可以重新打开这个窗口：**托盘图标 → Connection setup…**，
-或 Settings 页的 "Authentication: Configured · Connection setup"。
+之后随时可以重新打开这个窗口：Home 页或 Settings 页的 **Connection setup** 按钮，
+或 **托盘图标 → Connection setup…** —— 三个入口打开的是同一个只读窗口。
 
 > 不需要再手工编辑 `config.json`。配置由程序生成；已有用户的 token 不会被改动。
 > 令牌等同于密码：只填进你自己的 Shortcut，不要发到聊天群里。
@@ -29,6 +29,7 @@
 - Connected：本机中继可用，并且有局域网地址；不是 iPhone 实时在线检测。
 - Sync is active / Pause sync：同步启用；可暂停，再点 Resume sync 恢复。
 - iPhone connection / Copy address：复制当前 PC 的局域网 IP 地址。
+- Connection setup：打开只读的连接窗口，查看地址与令牌（没有网络时也可以打开）。
 - Recent activity：本次运行最近两次传输的方向、大小和时间，不显示正文。
 
 日常流程：
@@ -77,7 +78,7 @@ Markdown 按纯文本显示，长行在阅读区自动换行；Copy text 复制�
 - Appearance：System 跟随 Windows；也可选择 Light 或 Dark。
 - Clipboard sync：Pause / Resume 与 Check now 使用现有功能；没有离线队列。
 - iPhone connection：查看和复制当前地址。
-- Authentication: Configured · Connection setup：查看地址与令牌。
+- Connection setup 按钮：打开连接窗口，查看地址与令牌；旁边的 Authentication 状态行仅作显示，不可点击。
 - Open logs / Data folder：打开日志或数据文件夹。
 
 主题保存在 `%APPDATA%\ClipBridge\appearance.json`，不改变原有配置文件。

@@ -7,6 +7,20 @@ versions they shipped with (`apps/windows` client / `services/relay`).
 
 ## [Unreleased]
 
+### Fixed
+- **Connection setup was effectively unreachable from the main window.** The Settings
+  page hid the action inside a 260px muted `Authentication: Configured · Connection
+  setup` label whose `AutoEllipsis` cut the call to action out of view at 100/125% DPI,
+  and the Home page had no entry at all — users concluded the dialog could only be
+  reached via PowerShell. The gray label is a plain status line again, and real
+  **Connection setup** buttons now sit on the Home *iPhone connection* card and in the
+  Settings *Data & diagnostics* row. Home, Settings and the existing tray entry
+  (`Connection setup…`) open the same read-only dialog; opening it never regenerates
+  the token.
+- The *Connect your iPhone* dialog rendered at its 96-DPI size on 125/150% monitors
+  (cramped fields, clipped Copy buttons). The dialog now scales its fixed pixels and
+  client size with the monitor DPI; the 100% rendering is unchanged.
+
 ### Changed
 - Windows client and test suite migrated from .NET 8 to **.NET 10 LTS** (`net10.0` /
   `net10.0-windows`). `global.json` now pins SDK **10.0.402** (`rollForward: latestFeature`)
@@ -16,6 +30,12 @@ versions they shipped with (`apps/windows` client / `services/relay`).
   machine carrying both SDKs builds with .NET 10 deterministically. Product behaviour,
   protocol, storage and configuration formats are unchanged; the packaged relay (Python)
   is untouched.
+- UI regression tests cover the new connection-setup entry points: real buttons on
+  both pages firing the shared `ShowSetup` callback, entries usable without a LAN
+  address, no masked token text in the main window, the dialog keeping the token
+  masked by default and never rewriting the config, and the touched cards staying
+  overlap-free at minimum window size
+  (`apps/windows/tests/ClipBridge.Core.Tests/UI/ConnectionSetupTests.cs`).
 
 ## [1.0.0] — 2026-10-28 (client 1.0.0 / relay 1.0.0)
 
