@@ -80,6 +80,8 @@ public class WindowTests
         Assert.True(graphics.MeasureString("Relay restarting…", buttonFont).Width <= 180 * dpi / 96f);
         Assert.True(graphics.MeasureString("Settings", buttonFont).Width <= 68 * dpi / 96f);
         Assert.True(graphics.MeasureString("Copy address", buttonFont).Width <= 92 * dpi / 96f);
+        Assert.True(graphics.MeasureString("Connection setup", buttonFont).Width <= 108 * dpi / 96f,
+            "Connection setup label would clip inside the 124px Settings button");
         Assert.True(graphics.MeasureString("Windows → Relay · 2.00 MB", buttonFont).Width <= 320 * dpi / 96f);
         Assert.True(graphics.MeasureString("Sep 30 · 23:59", buttonFont).Width <= 146 * dpi / 96f);
     });

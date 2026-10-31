@@ -24,14 +24,14 @@ public sealed class MainWindow : Form
     private readonly BridgeView _bridge = new();
     private readonly Label _syncTitle, _syncHelp, _address, _addressHelp, _recentTitle, _emptyRecent;
     private readonly Label[] _recentRoute = new Label[2], _recentMeta = new Label[2];
-    private readonly ActionButton _pause, _copyAddress, _historyRefresh, _copyHistory;
+    private readonly ActionButton _pause, _copyAddress, _homeSetup, _historyRefresh, _copyHistory;
     private readonly HistoryList _history = new();
     private readonly HistoryText _detail = new();
     private readonly HistoryScrollBar _detailScroll;
     private readonly Label _historyState, _detailTitle, _detailMeta, _historyNotice;
     private readonly Label _historyEmpty, _detailPlaceholder;
     private readonly Label _startupHelp, _settingsSync, _settingsAddress, _auth, _settingsNotice;
-    private readonly ActionButton _startup, _settingsPause, _check, _settingsCopy, _retryRelay;
+    private readonly ActionButton _startup, _settingsPause, _check, _settingsCopy, _settingsSetup, _retryRelay;
     private readonly ActionButton[] _themes = new ActionButton[3];
     private readonly List<Surface> _settingsSections = [];
     private readonly List<AppStatusSnapshot> _recent = [];
@@ -82,6 +82,8 @@ public sealed class MainWindow : Form
         _address = Label(_addressSurface, "No local network connection", 12, true);
         _addressHelp = Label(_addressSurface, "Use this address in your iPhone Shortcuts.", 9, false, true);
         _copyAddress = Button(_addressSurface, "Copy address", CopyAddress, "copy");
+        _homeSetup = Button(_addressSurface, "Connection setup", () => _actions.ShowSetup?.Invoke());
+        _homeSetup.AccessibleDescription = "Open the address and token used by the iPhone Shortcuts";
         _recentTitle = Label(home, "Recent activity", 10, true);
         _emptyRecent = Label(home, "Nothing transferred this session.\nCopy on Windows, or send from your iPhone.", 9.5f, false, true);
         for (int i = 0; i < 2; i++)
@@ -159,13 +161,13 @@ public sealed class MainWindow : Form
         Set(Label(network, "Use the current address in both Shortcuts.", 9, false, true), 18, 68, -36, 22);
         _settingsCopy = Button(network, "Copy address", CopyAddress); Set(_settingsCopy, -140, 26, 122, 36);
         var data = Section(346, 84);
-        Set(Label(data, "Data & diagnostics", 10, true), 18, 12, 220, 24);
-        _auth = Label(data, "Authentication: Configured · Connection setup", 9, false, true); Set(_auth, 18, 43, 260, 24);
-        _auth.Cursor = Cursors.Hand;
-        _auth.AccessibleName = "Show connection setup";
-        _auth.Click += (_, _) => _actions.ShowSetup?.Invoke();
-        var logs = Button(data, "Open logs", () => RunSetting(actions.OpenLogs)); Set(logs, -236, 16, 96, 36);
-        var folder = Button(data, "Data folder", () => RunSetting(actions.OpenData)); Set(folder, -132, 16, 114, 36);
+        Set(Label(data, "Data & diagnostics", 10, true), 18, 12, 132, 24);
+        _settingsSetup = Button(data, "Connection setup", () => _actions.ShowSetup?.Invoke());
+        _settingsSetup.AccessibleDescription = "Open the address and token used by the iPhone Shortcuts";
+        Set(_settingsSetup, -360, 16, 124, 36);
+        _auth = Label(data, "Authentication: Configured", 9, false, true); Set(_auth, 18, 56, 300, 22);
+        var logs = Button(data, "Open logs", () => RunSetting(actions.OpenLogs)); Set(logs, -228, 16, 96, 36);
+        var folder = Button(data, "Data folder", () => RunSetting(actions.OpenData)); Set(folder, -124, 16, 106, 36);
         _retryRelay = Button(settings, "Restart relay", actions.RestartRelay); _retryRelay.Visible = false;
 
         _tooltip.SetToolTip(_copyAddress, "Copy the current LAN address without syncing it.");
@@ -430,8 +432,8 @@ public sealed class MainWindow : Form
         Put(_pause, bw - 158, 149, 140, 38);
         Put(_addressSurface, 0, 214, bw, 108);
         Put(_addressSurface.Controls[0], 18, 13, 250, 23);
-        Put(_address, 18, 39, bw - 178, 28); Put(_addressHelp, 18, 77, bw - 36, 22);
-        Put(_copyAddress, bw - 158, 35, 140, 38);
+        Put(_address, 18, 39, bw - 178, 28); Put(_addressHelp, 18, 77, bw - 178, 22);
+        Put(_copyAddress, bw - 158, 14, 140, 38); Put(_homeSetup, bw - 158, 58, 140, 38);
         Put(_recentTitle, 0, 348, bw, 26); Put(_emptyRecent, 0, 384, bw, 57);
         for (int i = 0; i < 2; i++)
         { Put(_recentRoute[i], 0, 384 + 39 * i, bw - 190, 30); Put(_recentMeta[i], bw - 205, 384 + 39 * i, 205, 30); }
