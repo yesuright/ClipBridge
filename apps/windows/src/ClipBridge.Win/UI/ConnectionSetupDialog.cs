@@ -38,13 +38,17 @@ public sealed class ConnectionSetupDialog : Form
         StartPosition = FormStartPosition.CenterParent;
         BackColor = colors.Background;
         ForeColor = colors.Text;
-        ClientSize = new Size(560, 416);
+        // Every fixed pixel below is expressed at 96 DPI and scaled by the monitor DPI;
+        // WinForms scales the fonts of this programmatic form but not its explicit
+        // sizes, and unsized pixels left at 96 DPI clipped the fields at 125/150%.
+        float d = DeviceDpi / 96f;
+        ClientSize = new Size((int)(560 * d), (int)(416 * d));
 
         var root = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            Padding = new Padding(22, 18, 22, 16),
+            Padding = new Padding((int)(22 * d), (int)(18 * d), (int)(22 * d), (int)(16 * d)),
             BackColor = colors.Background,
         };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -79,7 +83,7 @@ public sealed class ConnectionSetupDialog : Form
             Colors = colors,
             DialogResult = DialogResult.OK,
             Anchor = AnchorStyles.Right,
-            Size = new Size(110, 36),
+            Size = new Size((int)(110 * d), (int)(36 * d)),
         };
         var footer = new FlowLayoutPanel
         {
@@ -99,9 +103,9 @@ public sealed class ConnectionSetupDialog : Form
     {
         base.OnShown(e);
         // Same failure mode the main window already guards against: a programmatic form
-        // sized before handle creation opens at its 96-DPI size on a scaled monitor,
-        // leaving this dialog cramped with clipped buttons at 125/150%. Re-assert the
-        // intended client size once the real monitor DPI is known.
+        // sized before handle creation can end up at its 96-DPI size on a scaled
+        // monitor. Re-assert the intended client size once the real monitor DPI is
+        // known; the constructor already scales its fixed pixels the same way.
         float scale = DeviceDpi / 96f;
         ClientSize = new Size((int)(560 * scale), (int)(416 * scale));
     }
@@ -139,8 +143,8 @@ public sealed class ConnectionSetupDialog : Form
         Dock = DockStyle.Fill,
         TextAlign = ContentAlignment.MiddleLeft,
         UseMnemonic = false,
-        Margin = new Padding(0, 0, 0, 4),
-        Height = height,
+        Margin = new Padding(0, 0, 0, (int)(4 * DeviceDpi / 96f)),
+        Height = (int)(height * DeviceDpi / 96f),
     };
 
     private Label FieldLabel(string text) => new()
@@ -152,8 +156,8 @@ public sealed class ConnectionSetupDialog : Form
         Dock = DockStyle.Fill,
         TextAlign = ContentAlignment.BottomLeft,
         UseMnemonic = false,
-        Height = 26,
-        Margin = new Padding(0, 8, 0, 3),
+        Height = (int)(26 * DeviceDpi / 96f),
+        Margin = new Padding(0, (int)(8 * DeviceDpi / 96f), 0, (int)(3 * DeviceDpi / 96f)),
     };
 
     private TextBox ValueBox(string text, bool readOnly) => new()
@@ -170,13 +174,14 @@ public sealed class ConnectionSetupDialog : Form
 
     private Control WithButton(TextBox box, params object[] buttons)
     {
+        float d = DeviceDpi / 96f;
         var host = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = buttons.Length / 2 + 1,
-            Height = 34,
+            Height = (int)(34 * d),
             BackColor = _colors.Background,
-            Margin = new Padding(0, 0, 0, 6),
+            Margin = new Padding(0, 0, 0, (int)(6 * d)),
         };
         host.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         host.Controls.Add(box, 0, 0);
@@ -187,12 +192,12 @@ public sealed class ConnectionSetupDialog : Form
                 Text = (string)buttons[i],
                 Colors = _colors,
                 Dock = DockStyle.Fill,
-                Margin = new Padding(8, 0, 0, 0),
-                Width = 76,
+                Margin = new Padding((int)(8 * d), 0, 0, 0),
+                Width = (int)(76 * d),
             };
             var action = (Action)buttons[i + 1];
             button.Click += (_, _) => action();
-            host.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
+            host.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(84 * d)));
             host.Controls.Add(button, i / 2 + 1, 0);
         }
         return host;
