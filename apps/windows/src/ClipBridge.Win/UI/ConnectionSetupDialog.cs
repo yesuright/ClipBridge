@@ -95,6 +95,17 @@ public sealed class ConnectionSetupDialog : Form
         ApplyTheme();
     }
 
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        // Same failure mode the main window already guards against: a programmatic form
+        // sized before handle creation opens at its 96-DPI size on a scaled monitor,
+        // leaving this dialog cramped with clipped buttons at 125/150%. Re-assert the
+        // intended client size once the real monitor DPI is known.
+        float scale = DeviceDpi / 96f;
+        ClientSize = new Size((int)(560 * scale), (int)(416 * scale));
+    }
+
     private void ToggleReveal()
     {
         _revealed = !_revealed;
