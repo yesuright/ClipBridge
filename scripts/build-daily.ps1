@@ -254,7 +254,8 @@ ClipBridge - daily use
 Start:   double-click ClipBridge.exe (nothing else to run or install)
 Setup:   on first start ClipBridge creates its own access token and shows a
          "Connect your iPhone" window with the address + token for both Shortcuts.
-         Open it again any time: tray icon -> Connection setup...
+         Open it again any time: the Connection setup button on the Home or
+         Settings page, or tray icon -> Connection setup...
 Open:    click the tray icon (Home / History / Settings)
 Hide:    close the window; sync keeps running in the tray
 Stop:    right-click the tray icon -> Exit ClipBridge
