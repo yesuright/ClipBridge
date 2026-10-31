@@ -1,0 +1,72 @@
+# ClipBridge CI — public, token-free regression gates.
+#
+# Two jobs, mirroring the documented local baselines
+# (README.md → Building from source → Tests):
+#   1. dotnet-tests : Windows xUnit suite for the .NET 10 client (needs
+#                     net10.0-windows + WinForms, so a Windows runner is required).
+#   2. relay-tests  : FastAPI relay pytest suite. The relay code is
+#                     platform-independent (config falls back to XDG_DATA_HOME),
+#                     so it runs on the faster Linux runner.
+#
+# No secrets are used. PyInstaller release packaging is intentionally out of
+# scope here — CI verifies tests only; release artifacts are built locally via
+# scripts/build-daily.ps1 (see docs/DEVELOPMENT.md).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  dotnet-tests:
+    name: xUnit (Windows, .NET 10)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # global.json pins 10.0.402 with rollForward: latestFeature, so any later
+      # 10.0.x feature band is accepted — install the latest 10.0 SDK.
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Run xUnit tests
+        run: dotnet test apps/windows/tests/ClipBridge.Core.Tests -c Release
+
+  relay-tests:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        # README documents Python 3.12+ with 3.13 as the tested version.
+        python-version: ['3.12', '3.13']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install test dependencies
+        working-directory: services/relay
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Run pytest
+        working-directory: services/relay
+        run: python -m pytest
