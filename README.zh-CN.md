@@ -25,7 +25,7 @@ iPhone 复制 ──►「Send to ClipBridge」──► 本机 Relay ──► 
 
 [![ClipBridge 演示视频：电脑复制，手机一键取用，不经过云端](docs/media/demo-cover.jpg)](https://github.com/yesuright/ClipBridge/releases/download/v1.1.0/ClipBridge-Demo-52s-en-1080p.mp4)
 
-*点击封面观看 52 秒演示视频（1080p，英文说明字幕）：Windows 复制、iPhone 一键取用
+*点击封面查看或下载 52 秒演示视频（1080p，英文说明字幕）：Windows 复制、iPhone 一键取用
 ——纯文本、走你自己的局域网，不经过任何云端。*
 
 ## 它解决什么问题
