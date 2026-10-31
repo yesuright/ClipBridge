@@ -25,6 +25,14 @@ Both directions run through one small local relay that ships with the Windows ap
 iPhone side needs only the built-in **Shortcuts** app — no third-party app, no login,
 and the address/token are entered once per shortcut.
 
+## Demo (52 seconds)
+
+[![ClipBridge demo video — copy on Windows, tap on iPhone, no cloud](docs/media/demo-cover.jpg)](https://github.com/yesuright/ClipBridge/releases/download/v1.1.0/ClipBridge-Demo-52s-en-1080p.mp4)
+
+*Click the cover to view or download the 52-second demo (1080p, English captions): copy on
+Windows, tap on the iPhone — plain text over your own Wi-Fi, with no cloud in
+between.*
+
 ---
 
 ## Why
